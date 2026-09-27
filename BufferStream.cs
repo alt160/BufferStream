@@ -115,6 +115,7 @@ namespace System.IO
         /// The default string encoding is <see cref="Encoding.UTF8"/>.
         /// </summary>
         /// <param name="initialCapacity">The initial size of the underlying buffer in bytes.</param>
+        /// <param name="encoding">The encoding used by string read and write operations, or <see langword="null"/> to use <see cref="Encoding.UTF8"/>.</param>
         //======  CONSTRUCTORS  ======
         public BufferStream(uint initialCapacity = 4096, Encoding? encoding = null) : this((int)initialCapacity, encoding) { }
 
@@ -123,6 +124,7 @@ namespace System.IO
         /// The default string encoding is <see cref="Encoding.UTF8"/>.
         /// </summary>
         /// <param name="initialCapacity">The initial size of the underlying buffer in bytes.</param>
+        /// <param name="encoding">The encoding used by string read and write operations, or <see langword="null"/> to use <see cref="Encoding.UTF8"/>.</param>
         //======  CONSTRUCTORS  ======
         public BufferStream(int initialCapacity = 4096, Encoding? encoding = null)
         {
@@ -145,6 +147,12 @@ namespace System.IO
             StringEncoding = encoding;
         }
 
+        /// <summary>
+        /// Initializes a non-owning stream over writable caller-provided memory without copying it.<br/>
+        /// The stream starts at position zero with a length equal to <paramref name="segment"/>. Disposing this instance does not return or otherwise release the caller's memory.<br/>
+        /// </summary>
+        /// <param name="segment">The writable backing memory to expose through the stream.</param>
+        /// <param name="encoding">The encoding used by string read and write operations, or <see langword="null"/> to use <see cref="Encoding.UTF8"/>.</param>
         public BufferStream(Memory<byte> segment, Encoding? encoding = null)
         {
             if (encoding == null) encoding = Encoding.UTF8;
@@ -162,6 +170,12 @@ namespace System.IO
             _segmentPoolCount = 0;
             StringEncoding = encoding;
         }
+        /// <summary>
+        /// Initializes a non-owning stream from caller-provided read-only memory.<br/>
+        /// Array-backed memory is used directly; other memory is copied to an internal array. The stream starts at position zero with a length equal to <paramref name="segment"/>.<br/>
+        /// </summary>
+        /// <param name="segment">The source memory to expose through the stream.</param>
+        /// <param name="encoding">The encoding used by string read and write operations, or <see langword="null"/> to use <see cref="Encoding.UTF8"/>.</param>
         public BufferStream(ReadOnlyMemory<byte> segment, Encoding? encoding = null)
         {
             if (encoding == null) encoding = Encoding.UTF8;
@@ -182,6 +196,14 @@ namespace System.IO
             StringEncoding = encoding;
         }
 
+        /// <summary>
+        /// Initializes a stream from the remaining contents of a <see cref="MemoryStream"/>.<br/>
+        /// When <paramref name="preferZeroCopy"/> is <see langword="true"/> and the source exposes its buffer, this instance borrows that buffer; otherwise it copies the remaining bytes into a pooled buffer.<br/>
+        /// </summary>
+        /// <param name="ms">The source memory stream, read from its current position when a copy is required.</param>
+        /// <param name="preferZeroCopy"><see langword="true"/> to borrow an accessible source buffer when possible; otherwise <see langword="false"/> to always copy.</param>
+        /// <param name="takeOwnership"><see langword="true"/> to dispose <paramref name="ms"/> after initialization; otherwise <see langword="false"/>.</param>
+        /// <param name="encoding">The encoding used by string read and write operations, or <see langword="null"/> to use <see cref="Encoding.UTF8"/>.</param>
         public BufferStream(MemoryStream ms, bool preferZeroCopy = true, bool takeOwnership = false, Encoding? encoding = null)
         {
             if (encoding is null) encoding = Encoding.UTF8;
@@ -227,6 +249,13 @@ namespace System.IO
             if (takeOwnership) ms.Dispose();
         }
 
+        /// <summary>
+        /// Initializes a stream from the remaining contents of another stream.<br/>
+        /// An accessible <see cref="MemoryStream"/> buffer is borrowed without copying; all other sources are copied from their current position into a pooled buffer.<br/>
+        /// </summary>
+        /// <param name="s">The source stream to consume from its current position.</param>
+        /// <param name="takeOwnership"><see langword="true"/> to dispose <paramref name="s"/> after initialization; otherwise <see langword="false"/>.</param>
+        /// <param name="encoding">The encoding used by string read and write operations, or <see langword="null"/> to use <see cref="Encoding.UTF8"/>.</param>
         public BufferStream(Stream s, bool takeOwnership = false, Encoding? encoding = null)
         {
             if (encoding is null) encoding = Encoding.UTF8;
@@ -304,6 +333,13 @@ namespace System.IO
             if (takeOwnership) s.Dispose();
         }
 
+        /// <summary>
+        /// Initializes a stream by copying the remaining contents of a <see cref="FileStream"/> into a pooled buffer.<br/>
+        /// The source stream advances to its original position plus the copied byte count.<br/>
+        /// </summary>
+        /// <param name="fs">The source file stream to read from its current position.</param>
+        /// <param name="takeOwnership"><see langword="true"/> to dispose <paramref name="fs"/> after initialization; otherwise <see langword="false"/>.</param>
+        /// <param name="encoding">The encoding used by string read and write operations, or <see langword="null"/> to use <see cref="Encoding.UTF8"/>.</param>
         public BufferStream(FileStream fs, bool takeOwnership = false, Encoding? encoding = null)
         {
             if (encoding is null) encoding = Encoding.UTF8;
@@ -428,6 +464,10 @@ namespace System.IO
             }
         }
 
+        /// <summary>
+        /// Gets the encoding used by this instance's string read and write operations.<br/>
+        /// The value is <see cref="Encoding.UTF8"/> when construction did not supply an encoding.
+        /// </summary>
         public Encoding StringEncoding { get; }
 
 
@@ -765,8 +805,7 @@ namespace System.IO
         /// Returns a writeable slice of the written contents.
         /// </summary>
         /// <param name="offset">The zero-based byte offset into the written buffer.</param>
-        /// <param name="count">The number of bytes to include in the slice.</param>
-        /// <returns>A <see cref="ReadOnlyMemory{T}"/> representing the requested slice.</returns>
+        /// <returns>A <see cref="Memory{T}"/> representing the requested slice.</returns>
         public Memory<byte> Memory(int offset)
         {
             EnsureNotDisposed();
@@ -1222,10 +1261,26 @@ namespace System.IO
             return _position;
         }
 
+        /// <summary>
+        /// Creates a dynamic, pooled view of this stream beginning at its current position without copying bytes.<br/>
+        /// The returned view shares the root buffer and should be disposed when finished so its wrapper can be reused.
+        /// </summary>
+        /// <returns>A dynamic view whose position is zero at this stream's current position.</returns>
         public BufferStream CloneShallow() => Segment();
 
+        /// <summary>
+        /// Creates a dynamic, pooled view of this stream beginning at its current position without copying bytes.<br/>
+        /// The view shares the root buffer and grows with the owning stream's written length after its base offset.
+        /// </summary>
+        /// <returns>A dynamic view whose position is zero at this stream's current position.</returns>
         public BufferStream Segment() => RentSegment(_position, 0, fixedLength: false);
 
+        /// <summary>
+        /// Creates a dynamic, pooled view of this stream beginning at <paramref name="offset"/> without copying bytes.<br/>
+        /// The view shares the root buffer and grows with the owning stream's written length after its base offset.
+        /// </summary>
+        /// <param name="offset">The zero-based offset into this stream's written data.</param>
+        /// <returns>A dynamic view whose position is zero at <paramref name="offset"/>.</returns>
         public BufferStream Segment(int offset) => RentSegment(offset, 0, fixedLength: false);
 
         /// <summary>
@@ -1236,6 +1291,12 @@ namespace System.IO
         /// <param name="length">The fixed length of the segment.<br/></param>
         public BufferStream Segment(int offset, int length) => RentSegment(offset, length, fixedLength: true);
 
+        /// <summary>
+        /// Creates a dynamic, pooled view of this stream beginning at <paramref name="offset"/> without copying bytes.<br/>
+        /// The view shares the root buffer and grows with the owning stream's written length after its base offset.
+        /// </summary>
+        /// <param name="offset">The zero-based offset into this stream's written data.</param>
+        /// <returns>A dynamic view whose position is zero at <paramref name="offset"/>.</returns>
         public BufferStream Segment(uint offset) => Segment((int)offset);
 
         /// <inheritdoc/>
@@ -1266,6 +1327,11 @@ namespace System.IO
             return GetWritableSpan(offset, count);
         }
 
+        /// <summary>
+        /// Copies this stream's written contents into a new byte array.<br/>
+        /// The returned array is independent of the stream's backing buffer and is not rented from the shared pool.
+        /// </summary>
+        /// <returns>A new array containing this stream's written contents from offset zero through <see cref="Length"/>.</returns>
         public byte[] ToArray()
         {
             EnsureNotDisposed();
@@ -1581,7 +1647,7 @@ namespace System.IO
         /// Writes a byte array with a 7bit encode length prefix.<br/>
         /// Read with <see cref="ReadBytesWithLength"/>
         /// </summary>
-        /// <param name="source"></param>
+        /// <param name="source">The source byte array to prefix and write.</param>
         /// <exception cref="ArgumentNullException"></exception>
         /// <exception cref="ArgumentOutOfRangeException"></exception>
         public void WriteBytesWithLength(byte[] source) => WriteBlittableArrayWithLength(source);
@@ -1590,7 +1656,9 @@ namespace System.IO
         /// Writes a byte array with a 7bit encode length prefix.<br/>
         /// Read with <see cref="ReadBytesWithLength"/>
         /// </summary>
-        /// <param name="source"></param>
+        /// <param name="source">The source byte array containing the bytes to write.</param>
+        /// <param name="offset">The zero-based offset in <paramref name="source"/> at which to begin copying.</param>
+        /// <param name="count">The number of bytes to prefix and write from <paramref name="source"/>.</param>
         /// <exception cref="ArgumentNullException"></exception>
         /// <exception cref="ArgumentOutOfRangeException"></exception>
         public void WriteBytesWithLength(byte[] source, int offset, int count)
