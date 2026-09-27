@@ -4,6 +4,7 @@ artifacts/
 .vs/
 .vshistory/
 .code-history/
+.po/
 *.user
 *.suo
 *.nupkg

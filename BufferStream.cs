@@ -695,13 +695,26 @@ namespace System.IO
             owner.CachePooledSegment(this);
         }
 
-        private T[] ReadArrayWithLength<T>() where T : unmanaged
+        /// <summary>
+        /// Reads an unmanaged array whose payload is prefixed by its total byte length.<br/>
+        /// The byte length must be divisible by the unmanaged element size.<br/>
+        /// </summary>
+        /// <typeparam name="T">The unmanaged element type.<br/></typeparam>
+        /// <returns>A newly allocated array containing the decoded raw element values.<br/></returns>
+        private T[] ReadArrayWithByteLength<T>() where T : unmanaged
         {
             int byteCount = Read7BitEncodedInt();
-            if (byteCount < 0 || _position + byteCount > EffectiveLength)
+            if (byteCount < 0)
+                throw new InvalidDataException("A byte-length-prefixed array cannot have a negative byte length.");
+
+            int elementSize = Unsafe.SizeOf<T>();
+            if (byteCount % elementSize != 0)
+                throw new InvalidDataException($"The byte length {byteCount} is not divisible by the {elementSize}-byte element size.");
+
+            if (byteCount > EffectiveLength - _position)
                 throw new EndOfStreamException();
 
-            int elementCount = byteCount / Unsafe.SizeOf<T>();
+            int elementCount = byteCount / elementSize;
             T[] result = new T[elementCount];
 
             ReadOnlySpan<byte> src = GetReadOnlySpan(_position, byteCount);
@@ -734,36 +747,35 @@ namespace System.IO
         }
 
         /// <summary>
-        /// Writes an array of unmanaged values to the internal buffer,
-        /// prefixing the serialized bytes with a 7-bit encoded length.
+        /// Writes an unmanaged array as raw bytes prefixed by its total byte length.<br/>
+        /// The prefix measures payload bytes rather than logical elements.<br/>
         /// </summary>
+        /// <typeparam name="T">The unmanaged element type.<br/></typeparam>
+        /// <param name="source">The array whose raw element bytes are written.<br/></param>
         /// <remarks>
-        /// Type "T" must be <see langword="unmanaged"/>. Supported framework types include:<br/>
+        /// <typeparamref name="T"/> must be <see langword="unmanaged"/>. Supported framework types include:<br/>
         /// • Integer types: <see cref="byte"/>, <see cref="sbyte"/>, <see cref="short"/>, <see cref="ushort"/>, 
         ///   <see cref="int"/>, <see cref="uint"/>, <see cref="long"/>, <see cref="ulong"/><br/>
         /// • Floating-point types: <see cref="float"/>, <see cref="double"/>, <see cref="Half"/><br/>
         /// • Boolean and character: <see cref="bool"/> (1 byte 0/1), <see cref="char"/> (16-bit UTF-16 code unit)<br/>
-        /// • Other blittable structs: <see cref="System.Numerics.Vector2"/>, <see cref="System.Numerics.Vector3"/>, 
-        ///   <see cref="System.Numerics.Vector4"/>, <see cref="System.Numerics.Matrix4x4"/> and similar
-        /// - <see cref="decimal"/> and <see cref="DateTime"/> are not supported because they are not blittable.<br/>
-        /// - <see cref="System.Text.Rune"/> is technically blittable today, but its internal layout is not part of 
-        ///   the public contract and should not be persisted with this method.<br/>
-        /// - The length prefix is the total byte count, not the element count. Readers must divide by 
+        /// • Other unmanaged structs used by the public collection API, including dates, times, GUIDs, numerics, and matrices.<br/>
+        /// The payload preserves the existing raw in-memory representation; it is distinct from repeatedly invoking semantic scalar writers.<br/>
+        /// The length prefix is the total byte count, not the element count. Readers divide by
         ///   <c>Unsafe.SizeOf&lt;T&gt;()</c> to determine the array length.<br/>
         /// <example>
         /// <code>
         /// // Example: writing a char[]
         /// var chars = "Hello".ToCharArray();
-        /// WriteArrayWithLength(chars);
+        /// WriteArrayWithByteLength(chars);
         /// </code>
         /// </example>
         /// </remarks>
-        private void WriteBlittableArrayWithLength<T>(T[] source) where T : unmanaged
+        private void WriteArrayWithByteLength<T>(T[] source) where T : unmanaged
         {
             if (source == null)
                 throw new ArgumentNullException(nameof(source));
 
-            int byteCount = source.Length * Unsafe.SizeOf<T>();
+            int byteCount = checked(source.Length * Unsafe.SizeOf<T>());
             int lenSize = Get7BitEncodedIntSize(byteCount);
             EnsureCapacity(_position + byteCount + lenSize);
 
@@ -977,22 +989,9 @@ namespace System.IO
             return result;
         }
 
-        public BigInteger ReadBigInteger() => new BigInteger(ReadBytesWithLength());
+        public BigInteger ReadBigInteger() => new BigInteger(ReadBytesWithByteLength());
 
-        public BigInteger[] ReadBigIntegersWithLength()
-        {
-            int length = Read7BitEncodedInt();
-            var ret = new BigInteger[length];
-            for (int i = 0; i < length; i++)
-            {
-                ret[i] = ReadBigInteger();
-            }
-            return ret;
-        }
-
-        public BitArray ReadBitArray() => new BitArray(ReadBytesWithLength()) { Length = Read7BitEncodedInt() };
-
-        public bool[] ReadBoolsWithLength() => ReadArrayWithLength<bool>();
+        public BitArray ReadBitArray() => new BitArray(ReadBytesWithByteLength()) { Length = Read7BitEncodedInt() };
 
         /// <summary>
         /// Gets the byte at a logical index without changing <see cref="Position"/>.<br/>
@@ -1063,8 +1062,6 @@ namespace System.IO
             return result;
         }
 
-        public byte[] ReadBytesWithLength() => ReadArrayWithLength<byte>();
-
         /// <summary>
         /// Reads the fixed-width <see cref="char"/> value at the current position and advances the cursor by its in-memory size.<br/>
         /// This is the direct counterpart of <see cref="Write(char)"/>.
@@ -1073,9 +1070,6 @@ namespace System.IO
         /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
         /// <exception cref="EndOfStreamException">A complete character does not remain in this stream or segment.</exception>
         public char ReadChar() => ReadPrimitive<char>();
-
-        //chars
-        public char[] ReadCharsWithLength() => ReadArrayWithLength<char>();
 
         /// <summary>
         /// Reads a <see cref="Complex"/> value from its real and imaginary <see cref="double"/> components.<br/>
@@ -1129,12 +1123,6 @@ namespace System.IO
         /// <exception cref="EndOfStreamException">Eight bytes do not remain in this stream or segment.</exception>
         public double ReadDouble() => ReadPrimitive<double>();
 
-        //doubles
-        public double[] ReadDoubles() => ReadArrayWithLength<double>();
-
-        //floats
-        public float[] ReadFloats() => ReadArrayWithLength<float>();
-
         /// <summary>
         /// Reads the fixed-width <see cref="Guid"/> value at the current position and advances the cursor by sixteen bytes.<br/>
         /// This is the direct counterpart of <see cref="Write(Guid)"/>.
@@ -1144,9 +1132,6 @@ namespace System.IO
         /// <exception cref="EndOfStreamException">Sixteen bytes do not remain in this stream or segment.</exception>
         public Guid ReadGuid() => ReadPrimitive<Guid>();
 
-        // halfs
-        public Half[] ReadHalfs() => ReadArrayWithLength<Half>();
-
         /// <summary>
         /// Reads the fixed-width <see cref="Int128"/> value at the current position and advances the cursor by sixteen bytes.<br/>
         /// This is the direct counterpart of <see cref="Write(Int128)"/>.
@@ -1155,9 +1140,6 @@ namespace System.IO
         /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
         /// <exception cref="EndOfStreamException">Sixteen bytes do not remain in this stream or segment.</exception>
         public Int128 ReadInt128() => ReadPrimitive<Int128>();
-
-        //int128s
-        public Int128[] ReadInt128s() => ReadArrayWithLength<Int128>();
 
         /// <summary>
         /// Reads the signed byte at the current position and advances the cursor by one byte.<br/>
@@ -1177,9 +1159,6 @@ namespace System.IO
         /// <exception cref="EndOfStreamException">Two bytes do not remain in this stream or segment.</exception>
         public short ReadInt16() => ReadPrimitive<short>();
 
-        // shorts
-        public short[] ReadInt16s() => ReadArrayWithLength<short>();
-
         /// <summary>
         /// Reads the fixed-width <see cref="int"/> value at the current position and advances the cursor by four bytes.<br/>
         /// This is the direct counterpart of <see cref="Write(int)"/>.
@@ -1189,9 +1168,6 @@ namespace System.IO
         /// <exception cref="EndOfStreamException">Four bytes do not remain in this stream or segment.</exception>
         public int ReadInt32() => ReadPrimitive<int>();
 
-        //ints
-        public int[] ReadInt32s() => ReadArrayWithLength<int>();
-
         /// <summary>
         /// Reads the fixed-width <see cref="long"/> value at the current position and advances the cursor by eight bytes.<br/>
         /// This is the direct counterpart of <see cref="Write(long)"/>.
@@ -1200,9 +1176,6 @@ namespace System.IO
         /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
         /// <exception cref="EndOfStreamException">Eight bytes do not remain in this stream or segment.</exception>
         public long ReadInt64() => ReadPrimitive<long>();
-
-        //longs
-        public long[] ReadInt64s() => ReadArrayWithLength<long>();
 
         /// <summary>
         /// Reads a <see cref="Matrix3x2"/> from six serialized <see cref="float"/> components.<br/>
@@ -1278,8 +1251,6 @@ namespace System.IO
         /// <exception cref="ArgumentOutOfRangeException">The stored value is not a valid Unicode scalar value.</exception>
         public Rune ReadRune() => new Rune(ReadInt32());
 
-        public sbyte[] ReadSBytesWithLength() => ReadArrayWithLength<sbyte>();
-
         /// <summary>
         /// Reads the fixed-width <see cref="float"/> value at the current position and advances the cursor by four bytes.<br/>
         /// This is the direct counterpart of <see cref="Write(float)"/>.
@@ -1297,19 +1268,6 @@ namespace System.IO
             string value = StringEncoding.GetString(span);
             _position += length;
             return value;
-        }
-
-        //strings
-        public string[] ReadStringArray()
-        {
-            // read 7bit byte count
-            int count = Read7BitEncodedInt();
-
-            // read strings
-            string[] result = new string[count];
-            for (int i = 0; i < count; i++)
-                result[i] = ReadString()!;
-            return result;
         }
 
         /// <summary>
@@ -1358,9 +1316,6 @@ namespace System.IO
         /// <exception cref="EndOfStreamException">Sixteen bytes do not remain in this stream or segment.</exception>
         public UInt128 ReadUInt128() => ReadPrimitive<UInt128>();
 
-        //uint128s
-        public UInt128[] ReadUInt128s() => ReadArrayWithLength<UInt128>();
-
         /// <summary>
         /// Reads the fixed-width <see cref="ushort"/> value at the current position and advances the cursor by two bytes.<br/>
         /// This is the direct counterpart of <see cref="Write(ushort)"/>.
@@ -1369,9 +1324,6 @@ namespace System.IO
         /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
         /// <exception cref="EndOfStreamException">Two bytes do not remain in this stream or segment.</exception>
         public ushort ReadUInt16() => ReadPrimitive<ushort>();
-
-        //ushorts
-        public ushort[] ReadUInt16s() => ReadArrayWithLength<ushort>();
 
         /// <summary>
         /// Reads the fixed-width <see cref="uint"/> value at the current position and advances the cursor by four bytes.<br/>
@@ -1382,9 +1334,6 @@ namespace System.IO
         /// <exception cref="EndOfStreamException">Four bytes do not remain in this stream or segment.</exception>
         public uint ReadUInt32() => ReadPrimitive<uint>();
 
-        //uints
-        public uint[] ReadUInt32s() => ReadArrayWithLength<uint>();
-
         /// <summary>
         /// Reads the fixed-width <see cref="ulong"/> value at the current position and advances the cursor by eight bytes.<br/>
         /// This is the direct counterpart of <see cref="Write(ulong)"/>.
@@ -1393,9 +1342,6 @@ namespace System.IO
         /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
         /// <exception cref="EndOfStreamException">Eight bytes do not remain in this stream or segment.</exception>
         public ulong ReadUInt64() => ReadPrimitive<ulong>();
-
-        //ulongs
-        public ulong[] ReadUInt64s() => ReadArrayWithLength<ulong>();
 
         /// <summary>
         /// Reads a <see cref="Vector2"/> from two serialized <see cref="float"/> components.<br/>
@@ -1424,13 +1370,291 @@ namespace System.IO
         /// <exception cref="EndOfStreamException">A complete vector does not remain in this stream or segment.</exception>
         public Vector4 ReadVector4() { return new Vector4(ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>()); }
 
-        public Version[] ReadVersionsWithLength()
+        /// <summary>
+        /// Reads a sequence of <see cref="BigInteger"/> values prefixed by its element count.<br/>
+        /// Each element retains its own byte-length-prefixed representation.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public BigInteger[] ReadBigIntegersWithCount()
         {
             int count = Read7BitEncodedInt();
+            if (count < 0)
+                throw new InvalidDataException("A count-prefixed array cannot have a negative element count.");
+            if (count > EffectiveLength - _position)
+                throw new EndOfStreamException();
+
+            BigInteger[] result = new BigInteger[count];
+            for (int i = 0; i < count; i++)
+                result[i] = ReadBigInteger();
+            return result;
+        }
+
+        /// <summary>
+        /// Reads raw <see cref="bool"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteBooleansWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public bool[] ReadBooleansWithByteLength() => ReadArrayWithByteLength<bool>();
+
+        /// <summary>
+        /// Reads bytes prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteBytesWithByteLength(byte[])"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded bytes.<br/></returns>
+        public byte[] ReadBytesWithByteLength() => ReadArrayWithByteLength<byte>();
+
+        /// <summary>
+        /// Reads raw <see cref="char"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteCharsWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public char[] ReadCharsWithByteLength() => ReadArrayWithByteLength<char>();
+
+        /// <summary>
+        /// Reads raw <see cref="Complex"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteComplexesWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public Complex[] ReadComplexesWithByteLength() => ReadArrayWithByteLength<Complex>();
+
+        /// <summary>
+        /// Reads raw <see cref="DateOnly"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteDateOnlysWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public DateOnly[] ReadDateOnlysWithByteLength() => ReadArrayWithByteLength<DateOnly>();
+
+        /// <summary>
+        /// Reads raw <see cref="DateTimeOffset"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteDateTimeOffsetsWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public DateTimeOffset[] ReadDateTimeOffsetsWithByteLength() => ReadArrayWithByteLength<DateTimeOffset>();
+
+        /// <summary>
+        /// Reads raw <see cref="DateTime"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteDateTimesWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public DateTime[] ReadDateTimesWithByteLength() => ReadArrayWithByteLength<DateTime>();
+
+        /// <summary>
+        /// Reads <see cref="decimal"/> values prefixed by their element count.<br/>
+        /// Each element uses the same four-integer representation as <see cref="ReadDecimal"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public decimal[] ReadDecimalsWithCount()
+        {
+            int count = Read7BitEncodedInt();
+            if (count < 0)
+                throw new InvalidDataException("A count-prefixed array cannot have a negative element count.");
+            if (count > (EffectiveLength - _position) / 16)
+                throw new EndOfStreamException();
+
+            decimal[] result = new decimal[count];
+            for (int i = 0; i < count; i++)
+                result[i] = ReadDecimal();
+            return result;
+        }
+
+        /// <summary>
+        /// Reads raw <see cref="double"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteDoublesWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public double[] ReadDoublesWithByteLength() => ReadArrayWithByteLength<double>();
+
+        /// <summary>
+        /// Reads raw <see cref="Guid"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteGuidsWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public Guid[] ReadGuidsWithByteLength() => ReadArrayWithByteLength<Guid>();
+
+        /// <summary>
+        /// Reads raw <see cref="Half"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteHalfsWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public Half[] ReadHalfsWithByteLength() => ReadArrayWithByteLength<Half>();
+
+        /// <summary>
+        /// Reads raw <see cref="Int128"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteInt128sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public Int128[] ReadInt128sWithByteLength() => ReadArrayWithByteLength<Int128>();
+
+        /// <summary>
+        /// Reads raw <see cref="short"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteInt16sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public short[] ReadInt16sWithByteLength() => ReadArrayWithByteLength<short>();
+
+        /// <summary>
+        /// Reads raw <see cref="int"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteInt32sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public int[] ReadInt32sWithByteLength() => ReadArrayWithByteLength<int>();
+
+        /// <summary>
+        /// Reads raw <see cref="long"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteInt64sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public long[] ReadInt64sWithByteLength() => ReadArrayWithByteLength<long>();
+
+        /// <summary>
+        /// Reads raw <see cref="Matrix3x2"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteMatrix3x2sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public Matrix3x2[] ReadMatrix3x2sWithByteLength() => ReadArrayWithByteLength<Matrix3x2>();
+
+        /// <summary>
+        /// Reads raw <see cref="Matrix4x4"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteMatrix4x4sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public Matrix4x4[] ReadMatrix4x4sWithByteLength() => ReadArrayWithByteLength<Matrix4x4>();
+
+        /// <summary>
+        /// Reads raw <see cref="Plane"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WritePlanesWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public Plane[] ReadPlanesWithByteLength() => ReadArrayWithByteLength<Plane>();
+
+        /// <summary>
+        /// Reads raw <see cref="Quaternion"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteQuaternionsWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public Quaternion[] ReadQuaternionsWithByteLength() => ReadArrayWithByteLength<Quaternion>();
+
+        /// <summary>
+        /// Reads raw <see cref="sbyte"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteSBytesWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public sbyte[] ReadSBytesWithByteLength() => ReadArrayWithByteLength<sbyte>();
+
+        /// <summary>
+        /// Reads raw <see cref="float"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteSinglesWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public float[] ReadSinglesWithByteLength() => ReadArrayWithByteLength<float>();
+
+        /// <summary>
+        /// Reads strings prefixed by their element count.<br/>
+        /// Each string retains its own nullable byte-length-prefixed representation.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded nullable strings.<br/></returns>
+        public string?[] ReadStringsWithCount()
+        {
+            int count = Read7BitEncodedInt();
+            if (count < 0)
+                throw new InvalidDataException("A count-prefixed array cannot have a negative element count.");
+            if (count > EffectiveLength - _position)
+                throw new EndOfStreamException();
+
+            string?[] result = new string?[count];
+            for (int i = 0; i < count; i++)
+                result[i] = ReadString();
+            return result;
+        }
+
+        /// <summary>
+        /// Reads raw <see cref="TimeOnly"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteTimeOnlysWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public TimeOnly[] ReadTimeOnlysWithByteLength() => ReadArrayWithByteLength<TimeOnly>();
+
+        /// <summary>
+        /// Reads raw <see cref="TimeSpan"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteTimeSpansWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public TimeSpan[] ReadTimeSpansWithByteLength() => ReadArrayWithByteLength<TimeSpan>();
+
+        /// <summary>
+        /// Reads raw <see cref="UInt128"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteUInt128sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public UInt128[] ReadUInt128sWithByteLength() => ReadArrayWithByteLength<UInt128>();
+
+        /// <summary>
+        /// Reads raw <see cref="ushort"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteUInt16sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public ushort[] ReadUInt16sWithByteLength() => ReadArrayWithByteLength<ushort>();
+
+        /// <summary>
+        /// Reads raw <see cref="uint"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteUInt32sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public uint[] ReadUInt32sWithByteLength() => ReadArrayWithByteLength<uint>();
+
+        /// <summary>
+        /// Reads raw <see cref="ulong"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteUInt64sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public ulong[] ReadUInt64sWithByteLength() => ReadArrayWithByteLength<ulong>();
+
+        /// <summary>
+        /// Reads raw <see cref="Vector2"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteVector2sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public Vector2[] ReadVector2sWithByteLength() => ReadArrayWithByteLength<Vector2>();
+
+        /// <summary>
+        /// Reads raw <see cref="Vector3"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteVector3sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public Vector3[] ReadVector3sWithByteLength() => ReadArrayWithByteLength<Vector3>();
+
+        /// <summary>
+        /// Reads raw <see cref="Vector4"/> values prefixed by their total byte length.<br/>
+        /// This is the symmetric counterpart of <see cref="WriteVector4sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded values.<br/></returns>
+        public Vector4[] ReadVector4sWithByteLength() => ReadArrayWithByteLength<Vector4>();
+
+        /// <summary>
+        /// Reads <see cref="Version"/> values prefixed by their element count.<br/>
+        /// Two-, three-, and four-component versions retain their original component arity.<br/>
+        /// </summary>
+        /// <returns>A newly allocated array containing the decoded versions.<br/></returns>
+        public Version[] ReadVersionsWithCount()
+        {
+            int count = Read7BitEncodedInt();
+            if (count < 0)
+                throw new InvalidDataException("A count-prefixed array cannot have a negative element count.");
+            if (count > (EffectiveLength - _position) / 4)
+                throw new EndOfStreamException();
+
             Version[] versions = new Version[count];
             for (int i = 0; i < count; i++)
             {
-                versions[i] = new Version(Read7BitEncodedInt(), Read7BitEncodedInt(), Read7BitEncodedInt(), Read7BitEncodedInt());
+                int major = Read7BitEncodedInt();
+                int minor = Read7BitEncodedInt();
+                int build = Read7BitEncodedInt();
+                int revision = Read7BitEncodedInt();
+                versions[i] = revision >= 0
+                    ? new Version(major, minor, build, revision)
+                    : build >= 0
+                        ? new Version(major, minor, build)
+                        : new Version(major, minor);
             }
             return versions;
         }
@@ -1653,7 +1877,7 @@ namespace System.IO
         public void Write(BigInteger value)
         {
             var bytes = value.ToByteArray();
-            WriteBytesWithLength(bytes);
+            WriteBytesWithByteLength(bytes);
         }
 
         /// <summary>
@@ -1670,14 +1894,14 @@ namespace System.IO
             WriteBytes(utf8Bytes);
         }
 
-        public void Write(Memory<byte> value) => WriteBytesWithLength(value.ToArray());
+        public void Write(Memory<byte> value) => WriteBytesWithByteLength(value.ToArray());
 
         public void Write(BitArray value)
         {
             int count = (value.Length + 7) / 8;
             byte[] bytes = new byte[count];
             value.CopyTo(bytes, 0);
-            WriteBytesWithLength(bytes);
+            WriteBytesWithByteLength(bytes);
             Write7BitEncodedInt(value.Length);
         }
 
@@ -1824,16 +2048,27 @@ namespace System.IO
             source.AsSpan(sourceOffset, count).CopyTo(GetWritableSpan(destinationOffset, count));
         }
 
-        public void WriteBigIntegersWithLength(BigInteger[] source)
+        /// <summary>
+        /// Writes a sequence of arbitrary-precision integers prefixed by its logical element count.<br/>
+        /// Each element uses the same representation as <see cref="Write(BigInteger)"/> and can be restored with <see cref="ReadBigIntegersWithCount"/>.<br/>
+        /// </summary>
+        /// <param name="source">The integers to write in sequence order.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteBigIntegersWithCount(BigInteger[] source)
         {
-            //write 7bit count
+            ArgumentNullException.ThrowIfNull(source);
             Write7BitEncodedInt(source.Length);
-            // write binary for each decimal
             for (int i = 0; i < source.Length; i++)
                 Write(source[i]);
         }
 
-        public void WriteBooleansWithLength(bool[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes booleans as their raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadBooleansWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The booleans to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteBooleansWithByteLength(bool[] source) => WriteArrayWithByteLength(source);
 
         /// <summary>
         /// Writes one byte through the specialized buffer path for both BufferStream and Stream callers.<br/>
@@ -1875,131 +2110,292 @@ namespace System.IO
         }
 
         /// <summary>
-        /// Writes a byte array with a 7bit encode length prefix.<br/>
-        /// Read with <see cref="ReadBytesWithLength"/>
+        /// Writes bytes prefixed by their payload byte length.<br/>
+        /// Read the value with <see cref="ReadBytesWithByteLength"/>.<br/>
         /// </summary>
-        /// <param name="source">The source byte array to prefix and write.</param>
-        /// <exception cref="ArgumentNullException"></exception>
-        /// <exception cref="ArgumentOutOfRangeException"></exception>
-        public void WriteBytesWithLength(byte[] source) => WriteBlittableArrayWithLength(source);
+        /// <param name="source">The bytes to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteBytesWithByteLength(byte[] source) => WriteArrayWithByteLength(source);
 
         /// <summary>
-        /// Writes a byte array with a 7bit encode length prefix.<br/>
-        /// Read with <see cref="ReadBytesWithLength"/>
+        /// Writes a selected byte range prefixed by the selected payload byte length.<br/>
+        /// The prefix uses the same signed 7-bit representation as other BufferStream length prefixes and can be read with <see cref="ReadBytesWithByteLength"/>.<br/>
         /// </summary>
-        /// <param name="source">The source byte array containing the bytes to write.</param>
-        /// <param name="offset">The zero-based offset in <paramref name="source"/> at which to begin copying.</param>
-        /// <param name="count">The number of bytes to prefix and write from <paramref name="source"/>.</param>
-        /// <exception cref="ArgumentNullException"></exception>
-        /// <exception cref="ArgumentOutOfRangeException"></exception>
-        public void WriteBytesWithLength(byte[] source, int offset, int count)
+        /// <param name="source">The byte array containing the range to write.<br/></param>
+        /// <param name="offset">The zero-based source offset at which copying begins.<br/></param>
+        /// <param name="count">The number of bytes to prefix and write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The requested range is outside <paramref name="source"/>.<br/></exception>
+        public void WriteBytesWithByteLength(byte[] source, int offset, int count)
         {
-            if (source == null)
-                throw new ArgumentNullException(nameof(source));
-            if (offset < 0 || count < 0 || offset + count > source.Length)
-                throw new ArgumentOutOfRangeException();
-            var lenSize = Get7BitEncodedIntSize(count);
-            EnsureCapacity(_position + count + lenSize);
-            Write7BitEncodedIntToSpan(GetWritableSpan(_position, lenSize), count);
-            _position += lenSize;
-            source.AsSpan(offset, count).CopyTo(GetWritableSpan(_position, count));
-            _position += count;
-            UpdateLengthAfterWrite(_position);
+            ArgumentNullException.ThrowIfNull(source);
+            if ((uint)offset > (uint)source.Length || (uint)count > (uint)(source.Length - offset))
+                throw new ArgumentOutOfRangeException(nameof(count), "The requested source range is invalid.");
+
+            Write7BitEncodedInt(count);
+            WriteBytes(source, offset, count);
         }
 
-        public void WriteCharsWithLength(char[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes UTF-16 characters as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadCharsWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The characters to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteCharsWithByteLength(char[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteComplexesWithLength(Complex[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes complex numbers as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadComplexesWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The complex numbers to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteComplexesWithByteLength(Complex[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteDateOnlysWithLength(DateOnly[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes dates as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadDateOnlysWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The dates to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteDateOnlysWithByteLength(DateOnly[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteDateTimeOffsetsWithLength(DateTimeOffset[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes date-time offsets as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadDateTimeOffsetsWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The date-time offsets to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteDateTimeOffsetsWithByteLength(DateTimeOffset[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteDateTimesWithLength(DateTime[] source) => WriteBlittableArrayWithLength(source);
-        //public void WriteDateTimesWithLength(DateTime[] source)
-        //{
-        //    if (source == null)
-        //        throw new ArgumentNullException(nameof(source));
-        //    int byteCount = source.Length * 8;
-        //    int lenSize = Get7BitEncodedIntSize(byteCount);
-        //    EnsureCapacity(_position + byteCount + lenSize);
-        //    // Write length prefix
-        //    Write7BitEncodedIntToSpan(_bufferMemory.Span.Slice(_position), byteCount);
-        //    _position += lenSize;
-        //    // Write data as raw bytes
-        //    var srcSpan = MemoryMarshal.AsBytes(source.AsSpan());
-        //    srcSpan.CopyTo(GetWritableSpan(_position, byteCount));
-        //    _position += byteCount;
-        //    if (_position > _length)
-        //        _length = _position;
-        //}
+        /// <summary>
+        /// Writes date-time values as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadDateTimesWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The date-time values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteDateTimesWithByteLength(DateTime[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteDecimalsWithLength(decimal[] source)
+        /// <summary>
+        /// Writes decimal values prefixed by their logical element count.<br/>
+        /// Each element uses the same representation as <see cref="Write(decimal)"/> and can be restored with <see cref="ReadDecimalsWithCount"/>.<br/>
+        /// </summary>
+        /// <param name="source">The decimal values to write in sequence order.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteDecimalsWithCount(decimal[] source)
         {
-            //write 7bit count
+            ArgumentNullException.ThrowIfNull(source);
             Write7BitEncodedInt(source.Length);
-            // write binary for each decimal
             for (int i = 0; i < source.Length; i++)
                 Write(source[i]);
         }
 
-        public void WriteDoublesWithLength(double[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes double-precision values as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadDoublesWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteDoublesWithByteLength(double[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteGuidsWithLength(Guid[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes GUID values as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadGuidsWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The GUID values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteGuidsWithByteLength(Guid[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteHalfsWithLength(Half[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes half-precision values as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadHalfsWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteHalfsWithByteLength(Half[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteInt128sWithLength(Int128[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes signed 128-bit integers as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadInt128sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteInt128sWithByteLength(Int128[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteIntsWithLength(int[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes signed 16-bit integers as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadInt16sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteInt16sWithByteLength(short[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteLongsWithLength(long[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes signed 32-bit integers as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadInt32sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteInt32sWithByteLength(int[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteMatrix3x2sWithLength(Matrix3x2[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes signed 64-bit integers as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadInt64sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteInt64sWithByteLength(long[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteMatrix4x4sWithLength(Matrix4x4[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes 3x2 matrices as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadMatrix3x2sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The matrices to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteMatrix3x2sWithByteLength(Matrix3x2[] source) => WriteArrayWithByteLength(source);
 
-        public void WritePlanesWithLength(Plane[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes 4x4 matrices as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadMatrix4x4sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The matrices to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteMatrix4x4sWithByteLength(Matrix4x4[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteQuaternionsWithLength(Quaternion[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes planes as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadPlanesWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The planes to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WritePlanesWithByteLength(Plane[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteSBytesWithLength(sbyte[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes quaternions as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadQuaternionsWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The quaternions to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteQuaternionsWithByteLength(Quaternion[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteShortsWithLength(short[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes signed bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadSBytesWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteSBytesWithByteLength(sbyte[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteSinglesWithLength(float[] source) => WriteBlittableArrayWithLength(source);
+        /// <summary>
+        /// Writes single-precision values as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadSinglesWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteSinglesWithByteLength(float[] source) => WriteArrayWithByteLength(source);
 
-        public void WriteTimeOnlysWithLength(TimeOnly[] source) => WriteBlittableArrayWithLength(source);
-
-        public void WriteTimespansWithLength(TimeSpan[] source) => WriteBlittableArrayWithLength(source);
-
-        public void WriteTimeSpansWithLength(TimeSpan[] source) => WriteBlittableArrayWithLength(source);
-
-        public void WriteUInt128sWithLength(UInt128[] source) => WriteBlittableArrayWithLength(source);
-
-        public void WriteUIntsWithLength(uint[] source) => WriteBlittableArrayWithLength(source);
-
-        public void WriteULongsWithLength(ulong[] source) => WriteBlittableArrayWithLength(source);
-
-        public void WriteUShortsWithLength(ushort[] source) => WriteBlittableArrayWithLength(source);
-
-        public void WriteVector2sWithLength(Vector2[] source) => WriteBlittableArrayWithLength(source);
-
-        public void WriteVector3sWithLength(Vector3[] source) => WriteBlittableArrayWithLength(source);
-
-        public void WriteVector4sWithLength(Vector4[] source) => WriteBlittableArrayWithLength(source);
-
-        public void WriteVersionsWithLength(Version[] source)
+        /// <summary>
+        /// Writes strings prefixed by their logical element count.<br/>
+        /// Each element uses the same nullable representation as <see cref="Write(string?)"/> and can be restored with <see cref="ReadStringsWithCount"/>.<br/>
+        /// </summary>
+        /// <param name="source">The nullable strings to write in sequence order.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteStringsWithCount(string?[] source)
         {
-            //write 7bit count
+            ArgumentNullException.ThrowIfNull(source);
             Write7BitEncodedInt(source.Length);
-            // write binary for each decimal
-            foreach (var v in source)
+            for (int i = 0; i < source.Length; i++)
+                Write(source[i]);
+        }
+
+        /// <summary>
+        /// Writes times of day as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadTimeOnlysWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The times of day to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteTimeOnlysWithByteLength(TimeOnly[] source) => WriteArrayWithByteLength(source);
+
+        /// <summary>
+        /// Writes time intervals as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadTimeSpansWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The time intervals to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteTimeSpansWithByteLength(TimeSpan[] source) => WriteArrayWithByteLength(source);
+
+        /// <summary>
+        /// Writes unsigned 128-bit integers as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadUInt128sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteUInt128sWithByteLength(UInt128[] source) => WriteArrayWithByteLength(source);
+
+        /// <summary>
+        /// Writes unsigned 16-bit integers as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadUInt16sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteUInt16sWithByteLength(ushort[] source) => WriteArrayWithByteLength(source);
+
+        /// <summary>
+        /// Writes unsigned 32-bit integers as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadUInt32sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteUInt32sWithByteLength(uint[] source) => WriteArrayWithByteLength(source);
+
+        /// <summary>
+        /// Writes unsigned 64-bit integers as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadUInt64sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The values to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteUInt64sWithByteLength(ulong[] source) => WriteArrayWithByteLength(source);
+
+        /// <summary>
+        /// Writes two-dimensional vectors as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadVector2sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The vectors to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteVector2sWithByteLength(Vector2[] source) => WriteArrayWithByteLength(source);
+
+        /// <summary>
+        /// Writes three-dimensional vectors as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadVector3sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The vectors to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteVector3sWithByteLength(Vector3[] source) => WriteArrayWithByteLength(source);
+
+        /// <summary>
+        /// Writes four-dimensional vectors as raw in-memory bytes prefixed by the payload byte length.<br/>
+        /// Read the value with <see cref="ReadVector4sWithByteLength"/>.<br/>
+        /// </summary>
+        /// <param name="source">The vectors to write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteVector4sWithByteLength(Vector4[] source) => WriteArrayWithByteLength(source);
+
+        /// <summary>
+        /// Writes version values prefixed by their logical element count.<br/>
+        /// Each version stores its major, minor, build, and revision components and can be restored with <see cref="ReadVersionsWithCount"/>.<br/>
+        /// </summary>
+        /// <param name="source">The versions to write in sequence order.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        public void WriteVersionsWithCount(Version[] source)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+            Write7BitEncodedInt(source.Length);
+            foreach (Version version in source)
             {
-                Write7BitEncodedInt(v.Major);
-                Write7BitEncodedInt(v.Minor);
-                Write7BitEncodedInt(v.Build);
-                Write7BitEncodedInt(v.Revision);
+                Write7BitEncodedInt(version.Major);
+                Write7BitEncodedInt(version.Minor);
+                Write7BitEncodedInt(version.Build);
+                Write7BitEncodedInt(version.Revision);
             }
         }
 

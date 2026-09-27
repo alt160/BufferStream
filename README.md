@@ -41,6 +41,15 @@ string? text = buffer.ReadString();
 - Zero-copy wrapping where the supplied memory is array-backed.
 - Pooled shallow segments for low-allocation parsing workflows.
 
+## Collection framing
+
+Collection method names state exactly what their prefix measures:
+
+- `*WithByteLength` prefixes the total payload byte length and is used for raw unmanaged arrays, such as `WriteInt32sWithByteLength` / `ReadInt32sWithByteLength`.
+- `*WithCount` prefixes the logical element count and is used when each element has its own encoding, such as `WriteStringsWithCount` / `ReadStringsWithCount`.
+
+Every public collection writer has a reader with the same type stem and framing suffix.
+
 ## Compatibility
 
 The public API follows Semantic Versioning. A future package version may add APIs in a minor release; breaking source or binary API changes require a major version.
