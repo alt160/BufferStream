@@ -51,7 +51,7 @@ namespace System.IO
         private static int Get7BitEncodedIntSize(int value)
         {
             int count = 0;
-            uint v = (uint)value;
+            uint v = (uint)((value << 1) ^ (value >> 31));
             do
             {
                 v >>= 7;
@@ -63,7 +63,7 @@ namespace System.IO
         private static int Write7BitEncodedIntToSpan(Span<byte> span, int value)
         {
             int written = 0;
-            uint v = (uint)value;
+            uint v = (uint)((value << 1) ^ (value >> 31));
             while (v >= 0x80)
             {
                 span[written++] = (byte)(v | 0x80);
@@ -739,13 +739,21 @@ namespace System.IO
             return value;
         }
 
-        private void WriteAtOffset<T>(uint destinationOffset, T value) where T : unmanaged
+        private Span<byte> GetWritableOffsetSpan(int destinationOffset, int count)
         {
-            int size = Marshal.SizeOf<T>();
-            if (destinationOffset < 0 || destinationOffset + size > EffectiveLength)
+            EnsureNotDisposed();
+            int effectiveLength = EffectiveLength;
+            if ((uint)destinationOffset > (uint)effectiveLength ||
+                (uint)count > (uint)(effectiveLength - destinationOffset))
                 throw new ArgumentOutOfRangeException(nameof(destinationOffset), "Destination bounds must lie within written data.");
 
-            MemoryMarshal.Write(GetWritableSpan((int)destinationOffset, size), in value);
+            return GetWritableSpan(destinationOffset, count);
+        }
+
+        private void WriteAtOffset<T>(int destinationOffset, T value) where T : unmanaged
+        {
+            int size = Unsafe.SizeOf<T>();
+            MemoryMarshal.Write(GetWritableOffsetSpan(destinationOffset, size), in value);
         }
 
         /// <summary>
@@ -2247,76 +2255,230 @@ namespace System.IO
             WriteByte((byte)v);
         }
 
-        public void WriteAtOffset(uint destinationOffset, ReadOnlySpan<byte> source)
-        {
-            if (destinationOffset < 0 || destinationOffset + source.Length > EffectiveLength)
-                throw new ArgumentOutOfRangeException(nameof(destinationOffset), "Destination bounds must lie within written data.");
+        /// <summary>
+        /// Overwrites existing written bytes beginning at <paramref name="destinationOffset"/>.<br/>
+        /// The source may overlap the destination, and the operation does not change <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="source">The bytes to copy.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The destination range does not lie entirely within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, ReadOnlySpan<byte> source) =>
+            source.CopyTo(GetWritableOffsetSpan(destinationOffset, source.Length));
 
-            source.CopyTo(GetWritableSpan((int)destinationOffset, source.Length));
+        /// <summary>
+        /// Overwrites one existing byte without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(byte)"/> and can be read with <see cref="ReadByte()"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The byte value to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">One byte does not fit entirely within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, byte value) => WriteAtOffset<byte>(destinationOffset, value);
+
+        /// <summary>
+        /// Overwrites one existing signed byte without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(sbyte)"/> and can be read with <see cref="ReadSByte"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The signed byte value to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">One byte does not fit entirely within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, sbyte value) => WriteAtOffset<sbyte>(destinationOffset, value);
+
+        /// <summary>
+        /// Overwrites an existing 16-bit signed integer without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(short)"/> and can be read with <see cref="ReadInt16"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The signed integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete value does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, short value) => WriteAtOffset<short>(destinationOffset, value);
+
+        /// <summary>
+        /// Overwrites an existing 16-bit unsigned integer without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(ushort)"/> and can be read with <see cref="ReadUInt16"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The unsigned integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete value does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, ushort value) => WriteAtOffset<ushort>(destinationOffset, value);
+
+        /// <summary>
+        /// Overwrites an existing 32-bit signed integer without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(int)"/> and can be read with <see cref="ReadInt32"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The signed integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete value does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, int value) => WriteAtOffset<int>(destinationOffset, value);
+
+        /// <summary>
+        /// Overwrites an existing 32-bit unsigned integer without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(uint)"/> and can be read with <see cref="ReadUInt32"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The unsigned integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete value does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, uint value) => WriteAtOffset<uint>(destinationOffset, value);
+
+        /// <summary>
+        /// Overwrites an existing 64-bit signed integer without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(long)"/> and can be read with <see cref="ReadInt64"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The signed integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete value does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, long value) => WriteAtOffset<long>(destinationOffset, value);
+
+        /// <summary>
+        /// Overwrites an existing 64-bit unsigned integer without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(ulong)"/> and can be read with <see cref="ReadUInt64"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The unsigned integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete value does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, ulong value) => WriteAtOffset<ulong>(destinationOffset, value);
+
+        /// <summary>
+        /// Overwrites an existing single-precision value without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(float)"/> and can be read with <see cref="ReadSingle"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The single-precision value to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete value does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, float value) => WriteAtOffset<float>(destinationOffset, value);
+
+        /// <summary>
+        /// Overwrites an existing double-precision value without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(double)"/> and can be read with <see cref="ReadDouble"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The double-precision value to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete value does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, double value) => WriteAtOffset<double>(destinationOffset, value);
+
+        /// <summary>
+        /// Overwrites an existing decimal using the four-integer representation produced by <see cref="decimal.GetBits(decimal)"/>.<br/>
+        /// The representation is identical to <see cref="Write(decimal)"/> and the operation does not change <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The decimal value to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete 16-byte value does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, decimal value)
+        {
+            Span<int> bits = stackalloc int[4];
+            decimal.GetBits(value, bits);
+            MemoryMarshal.AsBytes(bits).CopyTo(GetWritableOffsetSpan(destinationOffset, 16));
         }
 
-        public void WriteAtOffset(uint destinationOffset, byte value) => WriteAtOffset<byte>(destinationOffset, value);
+        /// <summary>
+        /// Overwrites an existing one-byte Boolean without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(bool)"/> and can be read with <see cref="ReadBoolean"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The Boolean value to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">One byte does not fit entirely within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, bool value) => WriteAtOffset<bool>(destinationOffset, value);
 
-        public void WriteAtOffset(uint destinationOffset, sbyte value) => WriteAtOffset<sbyte>(destinationOffset, value);
+        /// <summary>
+        /// Overwrites an existing fixed-width UTF-16 character without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(char)"/> and can be read with <see cref="ReadChar"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The character to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete character does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, char value) => WriteAtOffset<char>(destinationOffset, value);
 
-        public void WriteAtOffset(uint destinationOffset, short value) => WriteAtOffset<short>(destinationOffset, value);
+        /// <summary>
+        /// Overwrites an existing fixed-width globally unique identifier without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// The representation is identical to <see cref="Write(Guid)"/> and can be read with <see cref="ReadGuid"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The globally unique identifier to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete identifier does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, Guid value) => WriteAtOffset<Guid>(destinationOffset, value);
 
-        public void WriteAtOffset(uint destinationOffset, ushort value) => WriteAtOffset<ushort>(destinationOffset, value);
+        /// <summary>
+        /// Overwrites an existing date and time using the signed 64-bit value produced by <see cref="DateTime.ToBinary"/>.<br/>
+        /// The representation is identical to <see cref="Write(DateTime)"/> and the operation does not change <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The date and time to write, including its <see cref="DateTime.Kind"/> information.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete eight-byte value does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, DateTime value) => WriteAtOffset(destinationOffset, value.ToBinary());
 
-        public void WriteAtOffset(uint destinationOffset, int value) => WriteAtOffset<int>(destinationOffset, value);
+        /// <summary>
+        /// Overwrites an existing time interval using its signed 64-bit tick count.<br/>
+        /// The representation is identical to <see cref="Write(TimeSpan)"/> and the operation does not change <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="value">The time interval to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete eight-byte value does not fit within the written data.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, TimeSpan value) => WriteAtOffset(destinationOffset, value.Ticks);
 
-        public void WriteAtOffset(uint destinationOffset, uint value) => WriteAtOffset<uint>(destinationOffset, value);
-
-        public void WriteAtOffset(uint destinationOffset, long value) => WriteAtOffset<long>(destinationOffset, value);
-
-        public void WriteAtOffset(uint destinationOffset, ulong value) => WriteAtOffset<ulong>(destinationOffset, value);
-
-        public void WriteAtOffset(uint destinationOffset, float value) => WriteAtOffset<float>(destinationOffset, value);
-
-        public void WriteAtOffset(uint destinationOffset, double value) => WriteAtOffset<double>(destinationOffset, value);
-
-        public void WriteAtOffset(uint destinationOffset, decimal value) => WriteAtOffset<decimal>(destinationOffset, value);
-
-        public void WriteAtOffset(uint destinationOffset, bool value) => WriteAtOffset<bool>(destinationOffset, value);
-
-        public void WriteAtOffset(uint destinationOffset, char value) => WriteAtOffset<char>(destinationOffset, value);
-
-        public void WriteAtOffset(uint destinationOffset, Guid value) => WriteAtOffset<Guid>(destinationOffset, value);
-
-        public void WriteAtOffset(uint destinationOffset, DateTime value) => WriteAtOffset<DateTime>(destinationOffset, value);
-
-        public void WriteAtOffset(uint destinationOffset, TimeSpan value) => WriteAtOffset<TimeSpan>(destinationOffset, value);
-
-        public void WriteAtOffset(int destinationOffset, string value)
+        /// <summary>
+        /// Overwrites a reserved region with the same signed-length-prefixed text representation as <see cref="Write(string?)"/>.<br/>
+        /// The complete representation must fit within <paramref name="reservedByteCount"/>; unused reserved bytes remain unchanged.<br/>
+        /// The operation does not shift following data or change <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based start of the reserved region within the written data.<br/></param>
+        /// <param name="value">The string to write, or <see langword="null"/> to write the null-string marker.<br/></param>
+        /// <param name="reservedByteCount">The number of existing bytes reserved for the complete encoded representation.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The reserved region is invalid or the encoded value does not fit within it.<br/></exception>
+        public void WriteAtOffset(int destinationOffset, string? value, int reservedByteCount)
         {
-            if (value == null)
-                throw new ArgumentNullException(nameof(value));
+            EnsureNotDisposed();
+            if (reservedByteCount < 0)
+                throw new ArgumentOutOfRangeException(nameof(reservedByteCount), "Reserved byte count must be non-negative.");
 
-            byte[] bytes = StringEncoding.GetBytes(value);
-            int totalSize = Get7BitEncodedIntSize(bytes.Length) + bytes.Length;
+            Span<byte> destination = GetWritableOffsetSpan(destinationOffset, reservedByteCount);
+            int byteCount = value == null ? -1 : StringEncoding.GetByteCount(value);
+            int payloadByteCount = Math.Max(byteCount, 0);
+            int totalSize = checked(Get7BitEncodedIntSize(byteCount) + payloadByteCount);
+            if (totalSize > reservedByteCount)
+                throw new ArgumentOutOfRangeException(nameof(reservedByteCount), "The encoded string does not fit within the reserved region.");
 
-            if (destinationOffset < 0 || destinationOffset + totalSize > EffectiveLength)
-                throw new ArgumentOutOfRangeException(nameof(destinationOffset), "Destination bounds must lie within written data.");
-
-            Span<byte> span = GetWritableSpan(destinationOffset, totalSize);
-
-            // Write length as 7-bit encoded
-            int written = Write7BitEncodedIntToSpan(span, bytes.Length);
-
-            // Write string bytes
-            bytes.AsSpan().CopyTo(span.Slice(written));
+            int written = Write7BitEncodedIntToSpan(destination, byteCount);
+            if (value != null)
+                StringEncoding.GetBytes(value, destination.Slice(written, payloadByteCount));
         }
 
+        /// <summary>
+        /// Overwrites existing written bytes from a range of <paramref name="source"/>.<br/>
+        /// Overlapping source and destination storage is supported, and the operation does not change <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based destination offset within the written data.<br/></param>
+        /// <param name="source">The source array containing the bytes to copy.<br/></param>
+        /// <param name="sourceOffset">The zero-based offset of the first source byte.<br/></param>
+        /// <param name="count">The number of bytes to copy.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The source or destination range is invalid.<br/></exception>
         public void WriteAtOffset(int destinationOffset, byte[] source, int sourceOffset, int count)
         {
-            if (source == null)
-                throw new ArgumentNullException(nameof(source));
-            if (destinationOffset < 0 || destinationOffset + count > EffectiveLength)
-                throw new ArgumentOutOfRangeException(nameof(destinationOffset), "Destination bounds must lie within written data.");
-            if (sourceOffset < 0 || count < 0 || sourceOffset + count > source.Length)
+            EnsureNotDisposed();
+            ArgumentNullException.ThrowIfNull(source);
+            if ((uint)sourceOffset > (uint)source.Length ||
+                (uint)count > (uint)(source.Length - sourceOffset))
                 throw new ArgumentOutOfRangeException(nameof(sourceOffset), "Source bounds are invalid.");
 
-            source.AsSpan(sourceOffset, count).CopyTo(GetWritableSpan(destinationOffset, count));
+            source.AsSpan(sourceOffset, count).CopyTo(GetWritableOffsetSpan(destinationOffset, count));
         }
 
         /// <summary>

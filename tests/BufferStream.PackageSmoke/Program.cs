@@ -55,6 +55,7 @@ catch (ObjectDisposedException)
 
 CollectionRoundTripSmoke.Run();
 ScalarWriteRoundTripSmoke.Run();
+PositionalWriteSmoke.Run();
 
 Console.WriteLine("BufferStream package smoke test passed.");
 
@@ -383,6 +384,221 @@ internal static class ScalarWriteRoundTripSmoke
     /// </summary>
     /// <typeparam name="TException">The required exception type.<br/></typeparam>
     /// <param name="operation">The operation expected to fail.<br/></param>
+    /// <param name="stream">The stream supplied to the operation.<br/></param>
+    /// <param name="scenario">A concise scenario name for diagnostics.<br/></param>
+    private static void ExpectException<TException>(Action<BufferStream> operation, BufferStream stream, string scenario)
+        where TException : Exception
+    {
+        try
+        {
+            operation(stream);
+            throw new InvalidDataException($"The {scenario} was accepted.");
+        }
+        catch (TException)
+        {
+        }
+    }
+}
+
+internal static class PositionalWriteSmoke
+{
+    /// <summary>
+    /// Exercises every positional-write overload through the installed package.<br/>
+    /// The checks require sequential wire compatibility, unchanged stream state, overflow-safe bounds, reserved-string enforcement, overlap safety, and disposal rejection.<br/>
+    /// </summary>
+    public static void Run()
+    {
+        AssertScalarRoundTrip((byte)0xA5, 1, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadByte());
+        AssertScalarRoundTrip((sbyte)-100, 1, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadSByte());
+        AssertScalarRoundTrip((short)-12345, 2, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadInt16());
+        AssertScalarRoundTrip((ushort)54321, 2, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadUInt16());
+        AssertScalarRoundTrip(-123456789, 4, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadInt32());
+        AssertScalarRoundTrip(3_456_789_012U, 4, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadUInt32());
+        AssertScalarRoundTrip(-8_765_432_109_876_543_210L, 8, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadInt64());
+        AssertScalarRoundTrip(17_654_321_098_765_432_109UL, 8, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadUInt64());
+        AssertScalarRoundTrip(MathF.PI, 4, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadSingle());
+        AssertScalarRoundTrip(Math.PI, 8, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadDouble());
+        AssertScalarRoundTrip(-123456789.0123456789m, 16, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadDecimal());
+        AssertScalarRoundTrip(true, 1, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadBoolean());
+        AssertScalarRoundTrip('\u03A9', 2, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadChar());
+        AssertScalarRoundTrip(Guid.Parse("23d6f309-bb92-4e2c-b4b9-8cd6a0c49cbd"), 16, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadGuid());
+
+        DateTime dateTime = new(2026, 9, 27, 15, 4, 5, DateTimeKind.Utc);
+        AssertScalarRoundTrip(dateTime, 8, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadDateTime(), static (expected, actual) => expected.Ticks == actual.Ticks && expected.Kind == actual.Kind);
+        AssertScalarRoundTrip(TimeSpan.FromTicks(-123456789), 8, static (stream, offset, value) => stream.WriteAtOffset(offset, value), static stream => stream.ReadTimeSpan());
+
+        AssertSpanAndArrayCopies();
+        AssertStringRoundTrips();
+        AssertBoundaries();
+        AssertDisposedWritesRejected();
+    }
+
+    /// <summary>
+    /// Patches one fixed-width scalar inside existing data and reads it with the corresponding sequential reader.<br/>
+    /// Position and length must remain unchanged by the patch, including when the value ends exactly at the stream boundary.<br/>
+    /// </summary>
+    /// <typeparam name="T">The scalar value type.<br/></typeparam>
+    /// <param name="expected">The value expected after decoding.<br/></param>
+    /// <param name="size">The serialized fixed width in bytes.<br/></param>
+    /// <param name="write">The positional writer under test.<br/></param>
+    /// <param name="read">The matching sequential reader.<br/></param>
+    /// <param name="equals">An optional equality function for values with additional serialized state.<br/></param>
+    private static void AssertScalarRoundTrip<T>(T expected, int size, Action<BufferStream, int, T> write, Func<BufferStream, T> read, Func<T, T, bool>? equals = null)
+    {
+        using var stream = new BufferStream();
+        stream.SetLength(size + 2);
+        stream.Position = 1;
+        long originalPosition = stream.Position;
+        long originalLength = stream.Length;
+
+        write(stream, 2, expected);
+        if (stream.Position != originalPosition || stream.Length != originalLength)
+            throw new InvalidDataException($"{write.Method.Name} changed position or length.");
+
+        stream.Position = 2;
+        T actual = read(stream);
+        bool equivalent = equals?.Invoke(expected, actual) ?? EqualityComparer<T>.Default.Equals(expected, actual);
+        if (!equivalent || stream.Position != originalLength)
+            throw new InvalidDataException($"{write.Method.Name}/{read.Method.Name} did not preserve the scalar representation at the exact end boundary.");
+    }
+
+    /// <summary>
+    /// Verifies raw span and array-range overwrites, including overlapping source and destination storage.<br/>
+    /// Both overloads must provide memmove-style overlap behavior while preserving position and length.<br/>
+    /// </summary>
+    private static void AssertSpanAndArrayCopies()
+    {
+        using (var stream = new BufferStream())
+        {
+            stream.WriteBytes(new byte[] { 0, 1, 2, 3, 4, 5 });
+            stream.Position = 1;
+            long originalLength = stream.Length;
+            stream.WriteAtOffset(2, stream.AsReadOnlySpan.Slice(0, 4));
+            if (!stream.AsReadOnlySpan.SequenceEqual(new byte[] { 0, 1, 0, 1, 2, 3 }) || stream.Position != 1 || stream.Length != originalLength)
+                throw new InvalidDataException("WriteAtOffset(int, ReadOnlySpan<byte>) did not preserve overlapping-copy or stream-state semantics.");
+        }
+
+        byte[] storage = { 0, 1, 2, 3, 4, 5 };
+        using (var stream = new BufferStream(storage.AsMemory()))
+        {
+            stream.Position = 1;
+            long originalLength = stream.Length;
+            stream.WriteAtOffset(2, storage, 0, 4);
+            if (!storage.AsSpan().SequenceEqual(new byte[] { 0, 1, 0, 1, 2, 3 }) || stream.Position != 1 || stream.Length != originalLength)
+                throw new InvalidDataException("WriteAtOffset(int, byte[], int, int) did not preserve overlapping-copy or stream-state semantics.");
+        }
+    }
+
+    /// <summary>
+    /// Verifies null, empty, short, threshold, and multibyte strings using reserved regions.<br/>
+    /// A rejected oversized replacement must leave the complete destination unchanged.<br/>
+    /// </summary>
+    private static void AssertStringRoundTrips()
+    {
+        AssertStringRoundTrip(null, 4);
+        AssertStringRoundTrip(string.Empty, 4);
+        AssertStringRoundTrip("test", 8);
+        AssertStringRoundTrip("tests", 8);
+        AssertStringRoundTrip(new string('x', 64), 70);
+        AssertStringRoundTrip("\u03A9\U0001F680", 12);
+
+        using var stream = new BufferStream();
+        byte[] initial = Enumerable.Repeat((byte)0xCC, 12).ToArray();
+        stream.WriteBytes(initial);
+        stream.Position = 3;
+        try
+        {
+            stream.WriteAtOffset(2, "too large", 4);
+            throw new InvalidDataException("The reserved-string writer accepted an oversized representation.");
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            if (!stream.AsReadOnlySpan.SequenceEqual(initial) || stream.Position != 3 || stream.Length != initial.Length)
+                throw new InvalidDataException("The rejected reserved-string write changed data, position, or length.");
+        }
+    }
+
+    /// <summary>
+    /// Writes one nullable string into a larger reserved slot and reads it through <see cref="BufferStream.ReadString"/>.<br/>
+    /// Bytes beyond the encoded representation must remain untouched.<br/>
+    /// </summary>
+    /// <param name="expected">The nullable string value to round-trip.<br/></param>
+    /// <param name="reservedByteCount">The size of the existing destination reservation.<br/></param>
+    private static void AssertStringRoundTrip(string? expected, int reservedByteCount)
+    {
+        const int offset = 2;
+        using var stream = new BufferStream();
+        byte[] initial = Enumerable.Repeat((byte)0xCC, offset + reservedByteCount).ToArray();
+        stream.WriteBytes(initial);
+        stream.Position = 1;
+        long originalLength = stream.Length;
+
+        stream.WriteAtOffset(offset, expected, reservedByteCount);
+        if (stream.Position != 1 || stream.Length != originalLength)
+            throw new InvalidDataException("The reserved-string writer changed position or length.");
+
+        stream.Position = offset;
+        string? actual = stream.ReadString();
+        if (actual != expected)
+            throw new InvalidDataException("The reserved-string writer did not match the sequential string reader.");
+
+        int used = checked((int)stream.Position - offset);
+        if (!stream.AsReadOnlySpan.Slice(offset + used, reservedByteCount - used).SequenceEqual(initial.AsSpan(offset + used, reservedByteCount - used)))
+            throw new InvalidDataException("The reserved-string writer changed unused reservation bytes.");
+    }
+
+    /// <summary>
+    /// Verifies negative, oversized, and extreme offsets plus invalid source ranges.<br/>
+    /// The checks specifically exercise subtraction-based validation without overflowing signed arithmetic.<br/>
+    /// </summary>
+    private static void AssertBoundaries()
+    {
+        using var stream = new BufferStream();
+        stream.SetLength(4);
+
+        ExpectException<ArgumentOutOfRangeException>(static candidate => candidate.WriteAtOffset(-1, (byte)1), stream, "negative positional offset");
+        ExpectException<ArgumentOutOfRangeException>(static candidate => candidate.WriteAtOffset(int.MaxValue, (byte)1), stream, "extreme positional offset");
+        ExpectException<ArgumentOutOfRangeException>(static candidate => candidate.WriteAtOffset(4, (short)1), stream, "past-end scalar write");
+        ExpectException<ArgumentOutOfRangeException>(static candidate => candidate.WriteAtOffset(0, new byte[1], 0, -1), stream, "negative source count");
+        ExpectException<ArgumentOutOfRangeException>(static candidate => candidate.WriteAtOffset(0, new byte[1], int.MaxValue, 0), stream, "extreme source offset");
+    }
+
+    /// <summary>
+    /// Verifies that root and owner-disposed positional writes fail before touching pooled memory.<br/>
+    /// Both fixed-width and raw-byte paths are included because they converge on the shared destination validator.<br/>
+    /// </summary>
+    private static void AssertDisposedWritesRejected()
+    {
+        var stream = new BufferStream();
+        stream.SetLength(4);
+        stream.Dispose();
+        ExpectException<ObjectDisposedException>(static candidate => candidate.WriteAtOffset(0, 42), stream, "disposed positional scalar write");
+
+        var raw = new BufferStream();
+        raw.SetLength(4);
+        raw.Dispose();
+        ExpectException<ObjectDisposedException>(static candidate => candidate.WriteAtOffset(0, new byte[] { 1 }, 0, 1), raw, "disposed positional array write");
+
+        var owner = new BufferStream();
+        owner.SetLength(4);
+        BufferStream segment = owner.Segment(0, 4);
+        owner.Dispose();
+        try
+        {
+            ExpectException<ObjectDisposedException>(static candidate => candidate.WriteAtOffset(0, (byte)1), segment, "owner-disposed positional segment write");
+        }
+        finally
+        {
+            segment.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Requires a positional operation to throw the specified exception type.<br/>
+    /// A successful operation is converted into an explicit smoke-test failure with the supplied scenario name.<br/>
+    /// </summary>
+    /// <typeparam name="TException">The required exception type.<br/></typeparam>
+    /// <param name="operation">The positional operation expected to fail.<br/></param>
     /// <param name="stream">The stream supplied to the operation.<br/></param>
     /// <param name="scenario">A concise scenario name for diagnostics.<br/></param>
     private static void ExpectException<TException>(Action<BufferStream> operation, BufferStream stream, string scenario)
