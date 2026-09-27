@@ -1,0 +1,10 @@
+[Bb]in/
+[Oo]bj/
+artifacts/
+.vs/
+.vshistory/
+.code-history/
+*.user
+*.suo
+*.nupkg
+*.snupkg

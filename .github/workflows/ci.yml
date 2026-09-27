@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-pack-smoke:
+    name: Build, pack, and consumer smoke (${{ matrix.tfm }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tfm: [net8.0, net9.0, net10.0]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore BufferStream.sln
+
+      - name: Build
+        run: dotnet build BufferStream.sln --configuration Release --no-restore
+
+      - name: Pack
+        shell: bash
+        run: |
+          VERSION="1.0.0-ci.${{ github.run_number }}"
+          dotnet pack BufferStream.csproj --configuration Release --no-build --output artifacts/packages /p:PackageVersion="$VERSION"
+          echo "BUFFERSTREAM_PACKAGE_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Run package-consumer smoke test
+        run: dotnet run --project tests/BufferStream.PackageSmoke --configuration Release --property:TargetFramework=${{ matrix.tfm }} --property:BufferStreamPackageVersion=${{ env.BUFFERSTREAM_PACKAGE_VERSION }}
+
+      - name: Upload packages
+        if: matrix.tfm == 'net8.0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/packages/*
+          if-no-files-found: error

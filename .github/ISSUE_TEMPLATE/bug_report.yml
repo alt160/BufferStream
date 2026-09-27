@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a reproducible BufferStream defect.
+title: "bug: "
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: BufferStream version
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Target framework and runtime
+      placeholder: net8.0 / .NET 8.0.x
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include expected and actual behavior.
+    validations:
+      required: true
