@@ -43,7 +43,7 @@ jobs:
           echo "BUFFERSTREAM_PACKAGE_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Run package-consumer smoke test
-        run: dotnet run --project tests/BufferStream.PackageSmoke --configuration Release --property:TargetFramework=${{ matrix.tfm }} --property:BufferStreamPackageVersion=${{ env.BUFFERSTREAM_PACKAGE_VERSION }}
+        run: dotnet run --project tests/BufferStream.PackageSmoke --configuration Release --framework ${{ matrix.tfm }} --property:BufferStreamPackageVersion=${{ env.BUFFERSTREAM_PACKAGE_VERSION }}
 
       - name: Upload packages
         if: matrix.tfm == 'net8.0'

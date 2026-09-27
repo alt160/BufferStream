@@ -41,9 +41,9 @@ jobs:
 
       - name: Run package-consumer smoke test
         run: |
-          dotnet run --project tests/BufferStream.PackageSmoke --configuration Release --property:TargetFramework=net8.0 --property:BufferStreamPackageVersion=${{ env.BUFFERSTREAM_PACKAGE_VERSION }}
-          dotnet run --project tests/BufferStream.PackageSmoke --configuration Release --property:TargetFramework=net9.0 --property:BufferStreamPackageVersion=${{ env.BUFFERSTREAM_PACKAGE_VERSION }}
-          dotnet run --project tests/BufferStream.PackageSmoke --configuration Release --property:TargetFramework=net10.0 --property:BufferStreamPackageVersion=${{ env.BUFFERSTREAM_PACKAGE_VERSION }}
+          dotnet run --project tests/BufferStream.PackageSmoke --configuration Release --framework net8.0 --property:BufferStreamPackageVersion=${{ env.BUFFERSTREAM_PACKAGE_VERSION }}
+          dotnet run --project tests/BufferStream.PackageSmoke --configuration Release --framework net9.0 --property:BufferStreamPackageVersion=${{ env.BUFFERSTREAM_PACKAGE_VERSION }}
+          dotnet run --project tests/BufferStream.PackageSmoke --configuration Release --framework net10.0 --property:BufferStreamPackageVersion=${{ env.BUFFERSTREAM_PACKAGE_VERSION }}
 
       - name: Create checksums
         shell: bash
