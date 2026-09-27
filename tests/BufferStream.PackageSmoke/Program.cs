@@ -56,6 +56,7 @@ catch (ObjectDisposedException)
 CollectionRoundTripSmoke.Run();
 ScalarWriteRoundTripSmoke.Run();
 PositionalWriteSmoke.Run();
+SevenBitEncodingSmoke.Run();
 
 Console.WriteLine("BufferStream package smoke test passed.");
 
@@ -599,6 +600,177 @@ internal static class PositionalWriteSmoke
     /// </summary>
     /// <typeparam name="TException">The required exception type.<br/></typeparam>
     /// <param name="operation">The positional operation expected to fail.<br/></param>
+    /// <param name="stream">The stream supplied to the operation.<br/></param>
+    /// <param name="scenario">A concise scenario name for diagnostics.<br/></param>
+    private static void ExpectException<TException>(Action<BufferStream> operation, BufferStream stream, string scenario)
+        where TException : Exception
+    {
+        try
+        {
+            operation(stream);
+            throw new InvalidDataException($"The {scenario} was accepted.");
+        }
+        catch (TException)
+        {
+        }
+    }
+}
+
+internal static class SevenBitEncodingSmoke
+{
+    /// <summary>
+    /// Exercises all six signed and unsigned seven-bit reader/writer pairs through the installed package.<br/>
+    /// Coverage includes zero, sign boundaries, maximum widths, malformed terminal bytes, truncation, disposal, and atomic fixed-segment failure.<br/>
+    /// </summary>
+    public static void Run()
+    {
+        AssertRoundTrip(int.MinValue, 5, static (stream, value) => stream.Write7BitEncodedInt(value), static stream => stream.Read7BitEncodedInt());
+        AssertRoundTrip(-1, 1, static (stream, value) => stream.Write7BitEncodedInt(value), static stream => stream.Read7BitEncodedInt());
+        AssertRoundTrip(0, 1, static (stream, value) => stream.Write7BitEncodedInt(value), static stream => stream.Read7BitEncodedInt());
+        AssertRoundTrip(int.MaxValue, 5, static (stream, value) => stream.Write7BitEncodedInt(value), static stream => stream.Read7BitEncodedInt());
+
+        AssertRoundTrip(long.MinValue, 10, static (stream, value) => stream.Write7BitEncodedLong(value), static stream => stream.Read7BitEncodedLong());
+        AssertRoundTrip(-1L, 1, static (stream, value) => stream.Write7BitEncodedLong(value), static stream => stream.Read7BitEncodedLong());
+        AssertRoundTrip(0L, 1, static (stream, value) => stream.Write7BitEncodedLong(value), static stream => stream.Read7BitEncodedLong());
+        AssertRoundTrip(long.MaxValue, 10, static (stream, value) => stream.Write7BitEncodedLong(value), static stream => stream.Read7BitEncodedLong());
+
+        AssertRoundTrip(Int128.MinValue, 19, static (stream, value) => stream.Write7BitEncodedInt128(value), static stream => stream.Read7BitEncodedInt128());
+        AssertRoundTrip((Int128)(-1), 1, static (stream, value) => stream.Write7BitEncodedInt128(value), static stream => stream.Read7BitEncodedInt128());
+        AssertRoundTrip(Int128.Zero, 1, static (stream, value) => stream.Write7BitEncodedInt128(value), static stream => stream.Read7BitEncodedInt128());
+        AssertRoundTrip(Int128.MaxValue, 19, static (stream, value) => stream.Write7BitEncodedInt128(value), static stream => stream.Read7BitEncodedInt128());
+
+        AssertRoundTrip(0U, 1, static (stream, value) => stream.Write7BitEncodedUInt(value), static stream => stream.Read7BitEncodedUInt());
+        AssertRoundTrip(127U, 1, static (stream, value) => stream.Write7BitEncodedUInt(value), static stream => stream.Read7BitEncodedUInt());
+        AssertRoundTrip(128U, 2, static (stream, value) => stream.Write7BitEncodedUInt(value), static stream => stream.Read7BitEncodedUInt());
+        AssertRoundTrip(uint.MaxValue, 5, static (stream, value) => stream.Write7BitEncodedUInt(value), static stream => stream.Read7BitEncodedUInt());
+
+        AssertRoundTrip(0UL, 1, static (stream, value) => stream.Write7BitEncodedULong(value), static stream => stream.Read7BitEncodedULong());
+        AssertRoundTrip(127UL, 1, static (stream, value) => stream.Write7BitEncodedULong(value), static stream => stream.Read7BitEncodedULong());
+        AssertRoundTrip(128UL, 2, static (stream, value) => stream.Write7BitEncodedULong(value), static stream => stream.Read7BitEncodedULong());
+        AssertRoundTrip(ulong.MaxValue, 10, static (stream, value) => stream.Write7BitEncodedULong(value), static stream => stream.Read7BitEncodedULong());
+
+        AssertRoundTrip(UInt128.Zero, 1, static (stream, value) => stream.Write7BitEncodedUInt128(value), static stream => stream.Read7BitEncodedUInt128());
+        AssertRoundTrip((UInt128)127, 1, static (stream, value) => stream.Write7BitEncodedUInt128(value), static stream => stream.Read7BitEncodedUInt128());
+        AssertRoundTrip((UInt128)128, 2, static (stream, value) => stream.Write7BitEncodedUInt128(value), static stream => stream.Read7BitEncodedUInt128());
+        AssertRoundTrip(UInt128.MaxValue, 19, static (stream, value) => stream.Write7BitEncodedUInt128(value), static stream => stream.Read7BitEncodedUInt128());
+
+        AssertMalformedValuesRejected();
+        AssertDisposedOperationsRejected();
+        AssertFixedSegmentFailureIsAtomic();
+    }
+
+    /// <summary>
+    /// Writes one seven-bit value, verifies its canonical byte count, and reads it back through the matching public reader.<br/>
+    /// The reader must consume exactly the encoded representation and reproduce the original value.<br/>
+    /// </summary>
+    /// <typeparam name="T">The signed or unsigned integer type under test.<br/></typeparam>
+    /// <param name="expected">The value expected after decoding.<br/></param>
+    /// <param name="expectedByteCount">The canonical encoded width in bytes.<br/></param>
+    /// <param name="write">The public seven-bit writer under test.<br/></param>
+    /// <param name="read">The matching public seven-bit reader.<br/></param>
+    private static void AssertRoundTrip<T>(T expected, int expectedByteCount, Action<BufferStream, T> write, Func<BufferStream, T> read)
+    {
+        using var stream = new BufferStream();
+        write(stream, expected);
+        if (stream.Length != expectedByteCount || stream.Position != expectedByteCount)
+            throw new InvalidDataException($"{write.Method.Name} produced {stream.Length} bytes; expected {expectedByteCount}.");
+
+        stream.Position = 0;
+        T actual = read(stream);
+        if (!EqualityComparer<T>.Default.Equals(expected, actual) || stream.Position != stream.Length)
+            throw new InvalidDataException($"{write.Method.Name}/{read.Method.Name} did not preserve the value and consume exactly its encoding.");
+    }
+
+    /// <summary>
+    /// Verifies deterministic rejection of terminal bytes that exceed the 32-, 64-, and 128-bit payload widths.<br/>
+    /// A truncated continuation sequence must instead report end-of-stream after consuming the available byte.<br/>
+    /// </summary>
+    private static void AssertMalformedValuesRejected()
+    {
+        AssertReadFailure<InvalidDataException>(
+            new byte[] { 0x80, 0x80, 0x80, 0x80, 0x10 },
+            static stream => _ = stream.Read7BitEncodedUInt(),
+            5,
+            "over-width UInt32");
+
+        AssertReadFailure<InvalidDataException>(
+            Enumerable.Repeat((byte)0x80, 9).Append((byte)0x02).ToArray(),
+            static stream => _ = stream.Read7BitEncodedULong(),
+            10,
+            "over-width UInt64");
+
+        AssertReadFailure<InvalidDataException>(
+            Enumerable.Repeat((byte)0x80, 18).Append((byte)0x04).ToArray(),
+            static stream => _ = stream.Read7BitEncodedUInt128(),
+            19,
+            "over-width UInt128");
+
+        AssertReadFailure<EndOfStreamException>(
+            new byte[] { 0x80 },
+            static stream => _ = stream.Read7BitEncodedInt(),
+            1,
+            "truncated signed Int32");
+    }
+
+    /// <summary>
+    /// Verifies that both reader and writer entry points reject disposed streams before accessing returned pooled memory.<br/>
+    /// </summary>
+    private static void AssertDisposedOperationsRejected()
+    {
+        var writer = new BufferStream();
+        writer.Dispose();
+        ExpectException<ObjectDisposedException>(static stream => stream.Write7BitEncodedUInt(1), writer, "disposed seven-bit writer");
+
+        var reader = new BufferStream();
+        reader.Dispose();
+        ExpectException<ObjectDisposedException>(static stream => _ = stream.Read7BitEncodedUInt(), reader, "disposed seven-bit reader");
+    }
+
+    /// <summary>
+    /// Verifies that a complete encoded value is validated before a fixed segment is mutated.<br/>
+    /// A two-byte value written into a one-byte segment must preserve the sentinel byte and cursor.<br/>
+    /// </summary>
+    private static void AssertFixedSegmentFailureIsAtomic()
+    {
+        using var owner = new BufferStream();
+        owner.Write((byte)0xCC);
+        using BufferStream segment = owner.Segment(0, 1);
+
+        ExpectException<ArgumentOutOfRangeException>(static stream => stream.Write7BitEncodedULong(128), segment, "oversized fixed-segment seven-bit write");
+        if (segment.Position != 0 || owner.AsReadOnlySpan[0] != 0xCC)
+            throw new InvalidDataException("The rejected fixed-segment seven-bit write partially changed the destination.");
+    }
+
+    /// <summary>
+    /// Requires a malformed seven-bit payload to throw the specified exception after consuming the expected bytes.<br/>
+    /// </summary>
+    /// <typeparam name="TException">The required exception type.<br/></typeparam>
+    /// <param name="payload">The complete malformed or truncated byte sequence.<br/></param>
+    /// <param name="read">The public reader expected to reject the payload.<br/></param>
+    /// <param name="expectedPosition">The cursor position expected after rejection.<br/></param>
+    /// <param name="scenario">A concise scenario name for diagnostics.<br/></param>
+    private static void AssertReadFailure<TException>(byte[] payload, Action<BufferStream> read, long expectedPosition, string scenario)
+        where TException : Exception
+    {
+        using var stream = new BufferStream(payload.AsMemory());
+        try
+        {
+            read(stream);
+            throw new InvalidDataException($"The {scenario} payload was accepted.");
+        }
+        catch (TException)
+        {
+            if (stream.Position != expectedPosition)
+                throw new InvalidDataException($"The {scenario} payload advanced to {stream.Position}; expected {expectedPosition}.");
+        }
+    }
+
+    /// <summary>
+    /// Requires a seven-bit operation to throw the specified exception type.<br/>
+    /// A successful operation is converted into an explicit smoke-test failure with the supplied scenario name.<br/>
+    /// </summary>
+    /// <typeparam name="TException">The required exception type.<br/></typeparam>
+    /// <param name="operation">The operation expected to fail.<br/></param>
     /// <param name="stream">The stream supplied to the operation.<br/></param>
     /// <param name="scenario">A concise scenario name for diagnostics.<br/></param>
     private static void ExpectException<TException>(Action<BufferStream> operation, BufferStream stream, string scenario)

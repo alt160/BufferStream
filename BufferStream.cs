@@ -864,95 +864,77 @@ namespace System.IO
             return available;
         }
 
+        /// <summary>
+        /// Reads a signed 32-bit integer encoded with ZigZag transformation and base-128 continuation bytes.<br/>
+        /// This is the counterpart of <see cref="Write7BitEncodedInt"/> and consumes between one and five bytes.<br/>
+        /// </summary>
+        /// <returns>The decoded signed 32-bit integer.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">The encoded value is truncated before a terminating byte.<br/></exception>
+        /// <exception cref="InvalidDataException">The encoded value exceeds 32 bits.<br/></exception>
         public int Read7BitEncodedInt()
         {
-            int count = 0;
-            int shift = 0;
-            byte b;
-            do
-            {
-                b = ReadByte();
-                count |= (b & 0x7F) << shift;
-                shift += 7;
-            } while ((b & 0x80) != 0);
-
-            // ZigZag decoding
-            return (int)((uint)count >> 1) ^ (-(count & 1));
+            uint encoded = Read7BitEncodedUInt32Core();
+            return (int)(encoded >> 1) ^ -((int)encoded & 1);
         }
 
+        /// <summary>
+        /// Reads a signed 128-bit integer encoded with ZigZag transformation and base-128 continuation bytes.<br/>
+        /// This is the counterpart of <see cref="Write7BitEncodedInt128"/> and consumes between one and nineteen bytes.<br/>
+        /// </summary>
+        /// <returns>The decoded signed 128-bit integer.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">The encoded value is truncated before a terminating byte.<br/></exception>
+        /// <exception cref="InvalidDataException">The encoded value exceeds 128 bits.<br/></exception>
         public Int128 Read7BitEncodedInt128()
         {
-            Int128 result = 0;
-            int shift = 0;
-            byte b;
-            do
-            {
-                b = ReadByte();
-                result |= (Int128)(b & 0x7F) << shift;
-                shift += 7;
-            } while ((b & 0x80) != 0);
-
-            // ZigZag decoding
-            return (result >> 1) ^ (-(result & 1));
+            UInt128 encoded = Read7BitEncodedUInt128Core();
+            return (Int128)(encoded >> 1) ^ -((Int128)encoded & 1);
         }
 
+        /// <summary>
+        /// Reads a signed 64-bit integer encoded with ZigZag transformation and base-128 continuation bytes.<br/>
+        /// This is the counterpart of <see cref="Write7BitEncodedLong"/> and consumes between one and ten bytes.<br/>
+        /// </summary>
+        /// <returns>The decoded signed 64-bit integer.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">The encoded value is truncated before a terminating byte.<br/></exception>
+        /// <exception cref="InvalidDataException">The encoded value exceeds 64 bits.<br/></exception>
         public long Read7BitEncodedLong()
         {
-            long result = 0;
-            int shift = 0;
-            byte b;
-            do
-            {
-                b = ReadByte();
-                result |= ((long)(b & 0x7F)) << shift;
-                shift += 7;
-            } while ((b & 0x80) != 0);
-
-            // ZigZag decoding
-            return (result >> 1) ^ (-(result & 1));
+            ulong encoded = Read7BitEncodedUInt64Core();
+            return (long)(encoded >> 1) ^ -((long)encoded & 1);
         }
 
-        public uint Read7BitEncodedUInt()
-        {
-            uint count = 0;
-            int shift = 0;
-            byte b;
-            do
-            {
-                b = ReadByte();
-                count |= (uint)(b & 0x7F) << shift;
-                shift += 7;
-            } while ((b & 0x80) != 0);
-            return count;
-        }
+        /// <summary>
+        /// Reads an unsigned 32-bit integer from base-128 continuation bytes without ZigZag transformation.<br/>
+        /// This is the counterpart of <see cref="Write7BitEncodedUInt"/> and consumes between one and five bytes.<br/>
+        /// </summary>
+        /// <returns>The decoded unsigned 32-bit integer.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">The encoded value is truncated before a terminating byte.<br/></exception>
+        /// <exception cref="InvalidDataException">The encoded value exceeds 32 bits.<br/></exception>
+        public uint Read7BitEncodedUInt() => Read7BitEncodedUInt32Core();
 
-        public UInt128 Read7BitEncodedUInt128()
-        {
-            UInt128 result = 0;
-            int shift = 0;
-            byte b;
-            do
-            {
-                b = ReadByte();
-                result |= (UInt128)(b & 0x7F) << shift;
-                shift += 7;
-            } while ((b & 0x80) != 0);
-            return result;
-        }
+        /// <summary>
+        /// Reads an unsigned 128-bit integer from base-128 continuation bytes without ZigZag transformation.<br/>
+        /// This is the counterpart of <see cref="Write7BitEncodedUInt128"/> and consumes between one and nineteen bytes.<br/>
+        /// </summary>
+        /// <returns>The decoded unsigned 128-bit integer.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">The encoded value is truncated before a terminating byte.<br/></exception>
+        /// <exception cref="InvalidDataException">The encoded value exceeds 128 bits.<br/></exception>
+        public UInt128 Read7BitEncodedUInt128() => Read7BitEncodedUInt128Core();
 
-        public ulong Read7BitEncodedULong()
-        {
-            ulong result = 0;
-            int shift = 0;
-            byte b;
-            do
-            {
-                b = ReadByte();
-                result |= (ulong)(b & 0x7F) << shift;
-                shift += 7;
-            } while ((b & 0x80) != 0);
-            return result;
-        }
+        /// <summary>
+        /// Reads an unsigned 64-bit integer from base-128 continuation bytes without ZigZag transformation.<br/>
+        /// This is the counterpart of <see cref="Write7BitEncodedULong"/> and consumes between one and ten bytes.<br/>
+        /// </summary>
+        /// <returns>The decoded unsigned 64-bit integer.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">The encoded value is truncated before a terminating byte.<br/></exception>
+        /// <exception cref="InvalidDataException">The encoded value exceeds 64 bits.<br/></exception>
+        public ulong Read7BitEncodedULong() => Read7BitEncodedUInt64Core();
 
         /// <summary>
         /// Returns a segment of the buffer without changing the position.
@@ -2189,71 +2171,62 @@ namespace System.IO
             WriteBytes(source, offset, count);
         }
 
-        public void Write7BitEncodedInt(int value)
-        {
-            uint v = (uint)((value << 1) ^ (value >> 31));
-            while (v >= 0x80)
-            {
-                WriteByte((byte)(v | 0x80));
-                v >>= 7;
-            }
-            WriteByte((byte)v);
-        }
+        /// <summary>
+        /// Writes a signed 32-bit integer using ZigZag transformation followed by base-128 continuation bytes.<br/>
+        /// Read the value with <see cref="Read7BitEncodedInt"/>; the complete one-to-five-byte encoding is validated before the stream is modified.<br/>
+        /// </summary>
+        /// <param name="value">The signed 32-bit integer to encode.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete encoding exceeds fixed-view bounds or available borrowed storage.<br/></exception>
+        public void Write7BitEncodedInt(int value) =>
+            Write7BitEncodedUInt32Core((uint)((value << 1) ^ (value >> 31)));
 
-        public void Write7BitEncodedInt128(Int128 value)
-        {
-            UInt128 v = (UInt128)((value << 1) ^ (value >> 127));
-            while (v >= 0x80)
-            {
-                WriteByte((byte)(v | 0x80));
-                v >>= 7;
-            }
-            WriteByte((byte)v);
-        }
+        /// <summary>
+        /// Writes a signed 128-bit integer using ZigZag transformation followed by base-128 continuation bytes.<br/>
+        /// Read the value with <see cref="Read7BitEncodedInt128"/>; the complete one-to-nineteen-byte encoding is validated before the stream is modified.<br/>
+        /// </summary>
+        /// <param name="value">The signed 128-bit integer to encode.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete encoding exceeds fixed-view bounds or available borrowed storage.<br/></exception>
+        public void Write7BitEncodedInt128(Int128 value) =>
+            Write7BitEncodedUInt128Core((UInt128)((value << 1) ^ (value >> 127)));
 
-        public void Write7BitEncodedLong(long value)
-        {
-            ulong v = (ulong)value; // ensures correct handling of sign
-            while (v >= 0x80)
-            {
-                WriteByte((byte)(v | 0x80));
-                v >>= 7;
-            }
-            WriteByte((byte)v);
-        }
+        /// <summary>
+        /// Writes a signed 64-bit integer using ZigZag transformation followed by base-128 continuation bytes.<br/>
+        /// Read the value with <see cref="Read7BitEncodedLong"/>; the complete one-to-ten-byte encoding is validated before the stream is modified.<br/>
+        /// </summary>
+        /// <param name="value">The signed 64-bit integer to encode.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete encoding exceeds fixed-view bounds or available borrowed storage.<br/></exception>
+        public void Write7BitEncodedLong(long value) =>
+            Write7BitEncodedUInt64Core((ulong)((value << 1) ^ (value >> 63)));
 
-        public void Write7BitEncodedUInt(uint value)
-        {
-            uint v = (uint)value;
-            while (v >= 0x80)
-            {
-                WriteByte((byte)(v | 0x80));
-                v >>= 7;
-            }
-            WriteByte((byte)v);
-        }
+        /// <summary>
+        /// Writes an unsigned 32-bit integer as base-128 continuation bytes without ZigZag transformation.<br/>
+        /// Read the value with <see cref="Read7BitEncodedUInt"/>; the complete one-to-five-byte encoding is validated before the stream is modified.<br/>
+        /// </summary>
+        /// <param name="value">The unsigned 32-bit integer to encode.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete encoding exceeds fixed-view bounds or available borrowed storage.<br/></exception>
+        public void Write7BitEncodedUInt(uint value) => Write7BitEncodedUInt32Core(value);
 
-        public void Write7BitEncodedUInt128(UInt128 value)
-        {
-            UInt128 v = value;
-            while (v >= 0x80)
-            {
-                WriteByte((byte)(v | 0x80));
-                v >>= 7;
-            }
-            WriteByte((byte)v);
-        }
+        /// <summary>
+        /// Writes an unsigned 128-bit integer as base-128 continuation bytes without ZigZag transformation.<br/>
+        /// Read the value with <see cref="Read7BitEncodedUInt128"/>; the complete one-to-nineteen-byte encoding is validated before the stream is modified.<br/>
+        /// </summary>
+        /// <param name="value">The unsigned 128-bit integer to encode.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete encoding exceeds fixed-view bounds or available borrowed storage.<br/></exception>
+        public void Write7BitEncodedUInt128(UInt128 value) => Write7BitEncodedUInt128Core(value);
 
-        public void Write7BitEncodedULong(long value)
-        {
-            ulong v = (ulong)((value << 1) ^ (value >> 63));
-            while (v >= 0x80)
-            {
-                WriteByte((byte)(v | 0x80));
-                v >>= 7;
-            }
-            WriteByte((byte)v);
-        }
+        /// <summary>
+        /// Writes an unsigned 64-bit integer as base-128 continuation bytes without ZigZag transformation.<br/>
+        /// Read the value with <see cref="Read7BitEncodedULong"/>; the complete one-to-ten-byte encoding is validated before the stream is modified.<br/>
+        /// </summary>
+        /// <param name="value">The unsigned 64-bit integer to encode.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete encoding exceeds fixed-view bounds or available borrowed storage.<br/></exception>
+        public void Write7BitEncodedULong(ulong value) => Write7BitEncodedUInt64Core(value);
 
         /// <summary>
         /// Overwrites existing written bytes beginning at <paramref name="destinationOffset"/>.<br/>
@@ -2965,6 +2938,149 @@ namespace System.IO
             }
         }
 
+        /// <summary>
+        /// Reads an unsigned 32-bit base-128 payload while enforcing its five-byte width limit.<br/>
+        /// Bytes consumed before truncation or an over-width terminal byte remain consumed, matching the stream's sequential-read behavior.<br/>
+        /// </summary>
+        /// <returns>The decoded unsigned payload before any signed ZigZag interpretation.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">The payload ends before a terminating byte.<br/></exception>
+        /// <exception cref="InvalidDataException">The fifth byte contains bits outside the 32-bit payload width.<br/></exception>
+        private uint Read7BitEncodedUInt32Core()
+        {
+            uint result = 0;
+            for (int shift = 0; shift < 28; shift += 7)
+            {
+                byte current = ReadByte();
+                result |= (uint)(current & 0x7F) << shift;
+                if ((current & 0x80) == 0)
+                    return result;
+            }
+
+            byte terminal = ReadByte();
+            if (terminal > 0x0F)
+                throw new InvalidDataException("The 7-bit encoded value exceeds 32 bits.");
+            return result | (uint)terminal << 28;
+        }
+
+        /// <summary>
+        /// Reads an unsigned 64-bit base-128 payload while enforcing its ten-byte width limit.<br/>
+        /// Bytes consumed before truncation or an over-width terminal byte remain consumed, matching the stream's sequential-read behavior.<br/>
+        /// </summary>
+        /// <returns>The decoded unsigned payload before any signed ZigZag interpretation.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">The payload ends before a terminating byte.<br/></exception>
+        /// <exception cref="InvalidDataException">The tenth byte contains bits outside the 64-bit payload width.<br/></exception>
+        private ulong Read7BitEncodedUInt64Core()
+        {
+            ulong result = 0;
+            for (int shift = 0; shift < 63; shift += 7)
+            {
+                byte current = ReadByte();
+                result |= (ulong)(current & 0x7F) << shift;
+                if ((current & 0x80) == 0)
+                    return result;
+            }
+
+            byte terminal = ReadByte();
+            if (terminal > 0x01)
+                throw new InvalidDataException("The 7-bit encoded value exceeds 64 bits.");
+            return result | (ulong)terminal << 63;
+        }
+
+        /// <summary>
+        /// Reads an unsigned 128-bit base-128 payload while enforcing its nineteen-byte width limit.<br/>
+        /// Bytes consumed before truncation or an over-width terminal byte remain consumed, matching the stream's sequential-read behavior.<br/>
+        /// </summary>
+        /// <returns>The decoded unsigned payload before any signed ZigZag interpretation.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">The payload ends before a terminating byte.<br/></exception>
+        /// <exception cref="InvalidDataException">The nineteenth byte contains bits outside the 128-bit payload width.<br/></exception>
+        private UInt128 Read7BitEncodedUInt128Core()
+        {
+            UInt128 result = 0;
+            for (int shift = 0; shift < 126; shift += 7)
+            {
+                byte current = ReadByte();
+                result |= (UInt128)(current & 0x7F) << shift;
+                if ((current & 0x80) == 0)
+                    return result;
+            }
+
+            byte terminal = ReadByte();
+            if (terminal > 0x03)
+                throw new InvalidDataException("The 7-bit encoded value exceeds 128 bits.");
+            return result | (UInt128)terminal << 126;
+        }
+
+        /// <summary>
+        /// Encodes an unsigned 32-bit payload into a temporary five-byte span and commits it with one validated stream write.<br/>
+        /// Staging the complete representation prevents partial mutation when a fixed or borrowed destination cannot contain it.<br/>
+        /// </summary>
+        /// <param name="value">The unsigned payload to encode without ZigZag transformation.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete encoding exceeds fixed-view bounds or available borrowed storage.<br/></exception>
+        private void Write7BitEncodedUInt32Core(uint value)
+        {
+            Span<byte> encoded = stackalloc byte[5];
+            int count = 0;
+            do
+            {
+                byte current = (byte)(value & 0x7F);
+                value >>= 7;
+                if (value != 0)
+                    current |= 0x80;
+                encoded[count++] = current;
+            } while (value != 0);
+
+            WriteBytes(encoded.Slice(0, count));
+        }
+
+        /// <summary>
+        /// Encodes an unsigned 64-bit payload into a temporary ten-byte span and commits it with one validated stream write.<br/>
+        /// Staging the complete representation prevents partial mutation when a fixed or borrowed destination cannot contain it.<br/>
+        /// </summary>
+        /// <param name="value">The unsigned payload to encode without ZigZag transformation.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete encoding exceeds fixed-view bounds or available borrowed storage.<br/></exception>
+        private void Write7BitEncodedUInt64Core(ulong value)
+        {
+            Span<byte> encoded = stackalloc byte[10];
+            int count = 0;
+            do
+            {
+                byte current = (byte)(value & 0x7F);
+                value >>= 7;
+                if (value != 0)
+                    current |= 0x80;
+                encoded[count++] = current;
+            } while (value != 0);
+
+            WriteBytes(encoded.Slice(0, count));
+        }
+
+        /// <summary>
+        /// Encodes an unsigned 128-bit payload into a temporary nineteen-byte span and commits it with one validated stream write.<br/>
+        /// Staging the complete representation prevents partial mutation when a fixed or borrowed destination cannot contain it.<br/>
+        /// </summary>
+        /// <param name="value">The unsigned payload to encode without ZigZag transformation.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The complete encoding exceeds fixed-view bounds or available borrowed storage.<br/></exception>
+        private void Write7BitEncodedUInt128Core(UInt128 value)
+        {
+            Span<byte> encoded = stackalloc byte[19];
+            int count = 0;
+            do
+            {
+                byte current = (byte)(value & 0x7F);
+                value >>= 7;
+                if (value != 0)
+                    current |= 0x80;
+                encoded[count++] = current;
+            } while (value != 0);
+
+            WriteBytes(encoded.Slice(0, count));
+        }
 
 
     }
