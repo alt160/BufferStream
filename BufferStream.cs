@@ -528,6 +528,8 @@ namespace System.IO
         /// <param name="min">The minimum required capacity.</param>
         private void EnsureCapacity(int min)
         {
+            EnsureNotDisposed();
+
             if (_owner != null)
             {
                 if (_isFixedLength && min > _length)
@@ -1371,6 +1373,24 @@ namespace System.IO
         public Vector4 ReadVector4() { return new Vector4(ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>()); }
 
         /// <summary>
+        /// Reads the fixed-width <see cref="bool"/> value at the current position and advances the cursor by one byte.<br/>
+        /// This is the direct counterpart of <see cref="Write(bool)"/>.<br/>
+        /// </summary>
+        /// <returns>The decoded Boolean value.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">One byte does not remain in this stream or segment.<br/></exception>
+        public bool ReadBoolean() => ReadPrimitive<bool>();
+
+        /// <summary>
+        /// Reads the fixed-width <see cref="Half"/> value at the current position and advances the cursor by two bytes.<br/>
+        /// This is the direct counterpart of <see cref="Write(Half)"/>.<br/>
+        /// </summary>
+        /// <returns>The decoded half-precision floating-point value.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">Two bytes do not remain in this stream or segment.<br/></exception>
+        public Half ReadHalf() => ReadPrimitive<Half>();
+
+        /// <summary>
         /// Reads a sequence of <see cref="BigInteger"/> values prefixed by its element count.<br/>
         /// Each element retains its own byte-length-prefixed representation.<br/>
         /// </summary>
@@ -1793,42 +1813,147 @@ namespace System.IO
             return GetReadOnlySpan(0, EffectiveLength).ToArray();
         }
 
+        /// <summary>
+        /// Writes a fixed-width Boolean value at the current position and advances the cursor by one byte.<br/>
+        /// Read the value with <see cref="ReadBoolean"/>.<br/>
+        /// </summary>
+        /// <param name="value">The Boolean value to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(bool value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes one byte at the current position and advances the cursor by one byte.<br/>
+        /// Read the value with <see cref="ReadByte"/>.<br/>
+        /// </summary>
+        /// <param name="value">The byte to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(byte value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a signed byte at the current position and advances the cursor by one byte.<br/>
+        /// Read the value with <see cref="ReadSByte"/>.<br/>
+        /// </summary>
+        /// <param name="value">The signed byte to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(sbyte value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a fixed-width signed 16-bit integer at the current position.<br/>
+        /// Read the value with <see cref="ReadInt16"/>.<br/>
+        /// </summary>
+        /// <param name="value">The signed 16-bit integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(short value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a fixed-width unsigned 16-bit integer at the current position.<br/>
+        /// Read the value with <see cref="ReadUInt16"/>.<br/>
+        /// </summary>
+        /// <param name="value">The unsigned 16-bit integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(ushort value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a fixed-width signed 32-bit integer at the current position.<br/>
+        /// Read the value with <see cref="ReadInt32"/>.<br/>
+        /// </summary>
+        /// <param name="value">The signed 32-bit integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(int value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a fixed-width unsigned 32-bit integer at the current position.<br/>
+        /// Read the value with <see cref="ReadUInt32"/>.<br/>
+        /// </summary>
+        /// <param name="value">The unsigned 32-bit integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(uint value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a fixed-width signed 64-bit integer at the current position.<br/>
+        /// Read the value with <see cref="ReadInt64"/>.<br/>
+        /// </summary>
+        /// <param name="value">The signed 64-bit integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(long value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a fixed-width unsigned 64-bit integer at the current position.<br/>
+        /// Read the value with <see cref="ReadUInt64"/>.<br/>
+        /// </summary>
+        /// <param name="value">The unsigned 64-bit integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(ulong value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a signed 128-bit integer as its low 64-bit half followed by its high 64-bit half.<br/>
+        /// Read the value with <see cref="ReadInt128"/>; a bounded compound write can advance after its first half before a later failure.<br/>
+        /// </summary>
+        /// <param name="value">The signed 128-bit integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Int128 value)
         {
             Write((ulong)(value & ulong.MaxValue));
             Write((ulong)(value >> 64));
         }
 
+        /// <summary>
+        /// Writes an unsigned 128-bit integer as its low 64-bit half followed by its high 64-bit half.<br/>
+        /// Read the value with <see cref="ReadUInt128"/>; a bounded compound write can advance after its first half before a later failure.<br/>
+        /// </summary>
+        /// <param name="value">The unsigned 128-bit integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(UInt128 value)
         {
             Write((ulong)(value & ulong.MaxValue));
             Write((ulong)(value >> 64));
         }
 
+        /// <summary>
+        /// Writes a fixed-width half-precision floating-point value at the current position.<br/>
+        /// Read the value with <see cref="ReadHalf"/>.<br/>
+        /// </summary>
+        /// <param name="value">The half-precision value to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Half value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a fixed-width single-precision floating-point value at the current position.<br/>
+        /// Read the value with <see cref="ReadSingle"/>.<br/>
+        /// </summary>
+        /// <param name="value">The single-precision value to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(float value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a fixed-width double-precision floating-point value at the current position.<br/>
+        /// Read the value with <see cref="ReadDouble"/>.<br/>
+        /// </summary>
+        /// <param name="value">The double-precision value to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(double value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a decimal value as the four signed 32-bit components returned by <see cref="decimal.GetBits(decimal)"/>.<br/>
+        /// Read the value with <see cref="ReadDecimal"/>; a bounded compound write can advance after one or more components before a later failure.<br/>
+        /// </summary>
+        /// <param name="value">The decimal value to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(decimal value)
         {
             int[] bits = decimal.GetBits((decimal)value);
@@ -1837,43 +1962,163 @@ namespace System.IO
 
         }
 
+        /// <summary>
+        /// Writes a fixed-width UTF-16 character at the current position.<br/>
+        /// Read the value with <see cref="ReadChar"/>.<br/>
+        /// </summary>
+        /// <param name="value">The UTF-16 character to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(char value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a Unicode scalar value as its signed 32-bit integer representation.<br/>
+        /// Read the value with <see cref="ReadRune"/>.<br/>
+        /// </summary>
+        /// <param name="value">The Unicode scalar value to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Rune value) => WritePrimitive((int)value.Value);
 
+        /// <summary>
+        /// Writes the signed 64-bit binary representation produced by <see cref="DateTime.ToBinary"/>.<br/>
+        /// Read the value with <see cref="ReadDateTime"/>.<br/>
+        /// </summary>
+        /// <param name="value">The date and time to write, including its <see cref="DateTime.Kind"/> information.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(DateTime value) => WritePrimitive(value.ToBinary());
+
+        /// <summary>
+        /// Writes a date-time offset as the local clock value's binary representation followed by the offset tick count.<br/>
+        /// Read the value with <see cref="ReadDateTimeOffset"/>; a bounded compound write can advance after the date-time component before a later failure.<br/>
+        /// </summary>
+        /// <param name="value">The date, time, and UTC offset to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(DateTimeOffset value) { WritePrimitive(value.DateTime.ToBinary()); WritePrimitive(value.Offset.Ticks); }
 
+        /// <summary>
+        /// Writes a fixed-width globally unique identifier at the current position.<br/>
+        /// Read the value with <see cref="ReadGuid"/>.<br/>
+        /// </summary>
+        /// <param name="value">The globally unique identifier to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Guid value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a date as its signed 32-bit day number.<br/>
+        /// Read the value with <see cref="ReadDateOnly"/>.<br/>
+        /// </summary>
+        /// <param name="value">The date to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(DateOnly value)
         {
             Write(value.DayNumber);  // Int32
         }
 
+        /// <summary>
+        /// Writes a time interval as its signed 64-bit tick count.<br/>
+        /// Read the value with <see cref="ReadTimeSpan"/>.<br/>
+        /// </summary>
+        /// <param name="value">The time interval to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(TimeSpan value) => WritePrimitive(value);
 
+        /// <summary>
+        /// Writes a time of day as its signed 64-bit tick count.<br/>
+        /// Read the value with <see cref="ReadTimeOnly"/>.<br/>
+        /// </summary>
+        /// <param name="value">The time of day to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(TimeOnly value)
         {
             Write(value.Ticks);  // Int64
         }
 
+        /// <summary>
+        /// Writes a two-dimensional vector as its X component followed by its Y component.<br/>
+        /// Read the value with <see cref="ReadVector2"/>; a bounded compound write can advance after its first component before a later failure.<br/>
+        /// </summary>
+        /// <param name="value">The two-dimensional vector to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Vector2 value) { WritePrimitive(value.X); WritePrimitive(value.Y); }
 
+        /// <summary>
+        /// Writes a three-dimensional vector in X, Y, Z component order.<br/>
+        /// Read the value with <see cref="ReadVector3"/>; a bounded compound write can advance after one or more components before a later failure.<br/>
+        /// </summary>
+        /// <param name="value">The three-dimensional vector to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Vector3 value) { WritePrimitive(value.X); WritePrimitive(value.Y); WritePrimitive(value.Z); }
 
+        /// <summary>
+        /// Writes a four-dimensional vector in X, Y, Z, W component order.<br/>
+        /// Read the value with <see cref="ReadVector4"/>; a bounded compound write can advance after one or more components before a later failure.<br/>
+        /// </summary>
+        /// <param name="value">The four-dimensional vector to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Vector4 value) { WritePrimitive(value.X); WritePrimitive(value.Y); WritePrimitive(value.Z); WritePrimitive(value.W); }
 
+        /// <summary>
+        /// Writes a complex number as its real component followed by its imaginary component.<br/>
+        /// Read the value with <see cref="ReadComplex"/>; a bounded compound write can advance after its real component before a later failure.<br/>
+        /// </summary>
+        /// <param name="value">The complex number to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Complex value) { WritePrimitive(value.Real); WritePrimitive(value.Imaginary); }
 
+        /// <summary>
+        /// Writes a quaternion in X, Y, Z, W component order.<br/>
+        /// Read the value with <see cref="ReadQuaternion"/>; a bounded compound write can advance after one or more components before a later failure.<br/>
+        /// </summary>
+        /// <param name="value">The quaternion to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Quaternion value) { WritePrimitive(value.X); WritePrimitive(value.Y); WritePrimitive(value.Z); WritePrimitive(value.W); }
 
+        /// <summary>
+        /// Writes a plane as its normal vector followed by its distance component.<br/>
+        /// Read the value with <see cref="ReadPlane"/>; a bounded compound write can advance after one or more components before a later failure.<br/>
+        /// </summary>
+        /// <param name="value">The plane to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Plane value) { Write(value.Normal); WritePrimitive(value.D); }
 
+        /// <summary>
+        /// Writes a 3x2 matrix in M11, M12, M21, M22, M31, M32 component order.<br/>
+        /// Read the value with <see cref="ReadMatrix3x2"/>; a bounded compound write can advance after one or more components before a later failure.<br/>
+        /// </summary>
+        /// <param name="value">The 3x2 matrix to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Matrix3x2 value) { WritePrimitive(value.M11); WritePrimitive(value.M12); WritePrimitive(value.M21); WritePrimitive(value.M22); WritePrimitive(value.M31); WritePrimitive(value.M32); }
 
+        /// <summary>
+        /// Writes a 4x4 matrix in row-major component order from M11 through M44.<br/>
+        /// Read the value with <see cref="ReadMatrix4x4"/>; a bounded compound write can advance after one or more components before a later failure.<br/>
+        /// </summary>
+        /// <param name="m4x4">The 4x4 matrix to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Matrix4x4 m4x4) { WritePrimitive(m4x4.M11); WritePrimitive(m4x4.M12); WritePrimitive(m4x4.M13); WritePrimitive(m4x4.M14); WritePrimitive(m4x4.M21); WritePrimitive(m4x4.M22); WritePrimitive(m4x4.M23); WritePrimitive(m4x4.M24); WritePrimitive(m4x4.M31); WritePrimitive(m4x4.M32); WritePrimitive(m4x4.M33); WritePrimitive(m4x4.M34); WritePrimitive(m4x4.M41); WritePrimitive(m4x4.M42); WritePrimitive(m4x4.M43); WritePrimitive(m4x4.M44); }
 
+        /// <summary>
+        /// Writes an arbitrary-precision integer as a byte-length-prefixed little-endian two's-complement payload.<br/>
+        /// Read the value with <see cref="ReadBigInteger"/>.<br/>
+        /// </summary>
+        /// <param name="value">The arbitrary-precision integer to write.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The framed write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(BigInteger value)
         {
             var bytes = value.ToByteArray();
@@ -1894,10 +2139,26 @@ namespace System.IO
             WriteBytes(utf8Bytes);
         }
 
+        /// <summary>
+        /// Writes the memory contents as a byte-length-prefixed payload.<br/>
+        /// Read the payload with <see cref="ReadBytesWithByteLength"/> and wrap the returned array in <see cref="Memory{T}"/> when a memory view is required.<br/>
+        /// </summary>
+        /// <param name="value">The byte memory whose current contents are copied into the stream.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The framed write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(Memory<byte> value) => WriteBytesWithByteLength(value.ToArray());
 
+        /// <summary>
+        /// Writes a bit array as a byte-length-prefixed packed payload followed by its logical bit count.<br/>
+        /// Read the value with <see cref="ReadBitArray"/>; the logical count preserves unused trailing bits in the final packed byte.<br/>
+        /// </summary>
+        /// <param name="value">The bit array to pack and write.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="value"/> is <see langword="null"/>.<br/></exception>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The framed write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void Write(BitArray value)
         {
+            ArgumentNullException.ThrowIfNull(value);
             int count = (value.Length + 7) / 8;
             byte[] bytes = new byte[count];
             value.CopyTo(bytes, 0);
@@ -1905,6 +2166,16 @@ namespace System.IO
             Write7BitEncodedInt(value.Length);
         }
 
+        /// <summary>
+        /// Writes an unframed range from a byte array using the standard <see cref="Stream.Write(byte[], int, int)"/> contract.<br/>
+        /// The method advances by the number of copied bytes and does not emit a length prefix.<br/>
+        /// </summary>
+        /// <param name="source">The byte array containing the range to write.<br/></param>
+        /// <param name="offset">The zero-based source offset at which copying begins.<br/></param>
+        /// <param name="count">The number of bytes to copy.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The source range is invalid, or the write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
         public override void Write(byte[] source, int offset, int count)
         {
             WriteBytes(source, offset, count);
@@ -2087,6 +2358,13 @@ namespace System.IO
             UpdateLengthAfterWrite(_position);
         }
 
+        /// <summary>
+        /// Copies an unframed byte span at the current position and advances by its length.<br/>
+        /// Use <see cref="WriteBytesWithByteLength(byte[])"/> when the payload must carry its own byte-length prefix.<br/>
+        /// </summary>
+        /// <param name="bytes">The byte span to copy.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
         public void WriteBytes(ReadOnlySpan<byte> bytes)
         {
             EnsureCapacity(_position + bytes.Length);
@@ -2095,6 +2373,16 @@ namespace System.IO
             UpdateLengthAfterWrite(_position);
         }
 
+        /// <summary>
+        /// Copies an unframed byte-array range at the current position and advances by <paramref name="count"/>.<br/>
+        /// Use <see cref="WriteBytesWithByteLength(byte[], int, int)"/> when the selected range must carry its own byte-length prefix.<br/>
+        /// </summary>
+        /// <param name="source">The byte array containing the range to copy.<br/></param>
+        /// <param name="offset">The zero-based source offset at which copying begins.<br/></param>
+        /// <param name="count">The number of bytes to copy.<br/></param>
+        /// <exception cref="ArgumentNullException"><paramref name="source"/> is <see langword="null"/>.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The source range is invalid, or the write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
         public void WriteBytes(byte[] source, int offset, int count)
         {
             EnsureNotDisposed();

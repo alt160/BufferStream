@@ -1,5 +1,7 @@
+using System.Collections;
 using System.IO;
 using System.Numerics;
+using System.Text;
 
 using var buffer = new BufferStream();
 buffer.Write(42);
@@ -52,6 +54,7 @@ catch (ObjectDisposedException)
 }
 
 CollectionRoundTripSmoke.Run();
+ScalarWriteRoundTripSmoke.Run();
 
 Console.WriteLine("BufferStream package smoke test passed.");
 
@@ -208,6 +211,190 @@ internal static class CollectionRoundTripSmoke
         {
             if (stream.Position != expectedPosition)
                 throw new InvalidDataException($"The {scenario} frame advanced to {stream.Position}; expected {expectedPosition}.");
+        }
+    }
+}
+
+internal static class ScalarWriteRoundTripSmoke
+{
+    /// <summary>
+    /// Exercises every scalar and direct-byte writer represented by the 37-member documentation-warning group.<br/>
+    /// The checks cover matching scalar readers, framed value shapes, unframed byte paths, disposal guards, and explicit null rejection.<br/>
+    /// </summary>
+    public static void Run()
+    {
+        AssertRoundTrip(true, static (stream, value) => stream.Write(value), static stream => stream.ReadBoolean());
+        AssertRoundTrip((byte)0xA5, static (stream, value) => stream.Write(value), static stream => stream.ReadByte());
+        AssertRoundTrip((sbyte)-100, static (stream, value) => stream.Write(value), static stream => stream.ReadSByte());
+        AssertRoundTrip((short)-12345, static (stream, value) => stream.Write(value), static stream => stream.ReadInt16());
+        AssertRoundTrip((ushort)54321, static (stream, value) => stream.Write(value), static stream => stream.ReadUInt16());
+        AssertRoundTrip(-123456789, static (stream, value) => stream.Write(value), static stream => stream.ReadInt32());
+        AssertRoundTrip(3_456_789_012U, static (stream, value) => stream.Write(value), static stream => stream.ReadUInt32());
+        AssertRoundTrip(-8_765_432_109_876_543_210L, static (stream, value) => stream.Write(value), static stream => stream.ReadInt64());
+        AssertRoundTrip(17_654_321_098_765_432_109UL, static (stream, value) => stream.Write(value), static stream => stream.ReadUInt64());
+        AssertRoundTrip(Int128.MinValue + 123, static (stream, value) => stream.Write(value), static stream => stream.ReadInt128());
+        AssertRoundTrip(UInt128.MaxValue - 123, static (stream, value) => stream.Write(value), static stream => stream.ReadUInt128());
+        AssertRoundTrip((Half)1.5, static (stream, value) => stream.Write(value), static stream => stream.ReadHalf());
+        AssertRoundTrip(MathF.PI, static (stream, value) => stream.Write(value), static stream => stream.ReadSingle());
+        AssertRoundTrip(Math.PI, static (stream, value) => stream.Write(value), static stream => stream.ReadDouble());
+        AssertRoundTrip(-123456789.0123456789m, static (stream, value) => stream.Write(value), static stream => stream.ReadDecimal());
+        AssertRoundTrip('\u03A9', static (stream, value) => stream.Write(value), static stream => stream.ReadChar());
+        AssertRoundTrip(new Rune(0x1F680), static (stream, value) => stream.Write(value), static stream => stream.ReadRune());
+
+        DateTime dateTime = new(2026, 9, 27, 15, 4, 5, DateTimeKind.Utc);
+        AssertRoundTrip(dateTime, static (stream, value) => stream.Write(value), static stream => stream.ReadDateTime(), static (expected, actual) => expected.Ticks == actual.Ticks && expected.Kind == actual.Kind);
+
+        DateTimeOffset dateTimeOffset = new(2026, 9, 27, 15, 4, 5, TimeSpan.FromHours(-7));
+        AssertRoundTrip(dateTimeOffset, static (stream, value) => stream.Write(value), static stream => stream.ReadDateTimeOffset(), static (expected, actual) => expected.EqualsExact(actual));
+
+        AssertRoundTrip(Guid.Parse("23d6f309-bb92-4e2c-b4b9-8cd6a0c49cbd"), static (stream, value) => stream.Write(value), static stream => stream.ReadGuid());
+        AssertRoundTrip(new DateOnly(2026, 9, 27), static (stream, value) => stream.Write(value), static stream => stream.ReadDateOnly());
+        AssertRoundTrip(TimeSpan.FromTicks(-123456789), static (stream, value) => stream.Write(value), static stream => stream.ReadTimeSpan());
+        AssertRoundTrip(new TimeOnly(23, 59, 58, 999), static (stream, value) => stream.Write(value), static stream => stream.ReadTimeOnly());
+        AssertRoundTrip(new Vector2(1.25f, -2.5f), static (stream, value) => stream.Write(value), static stream => stream.ReadVector2());
+        AssertRoundTrip(new Vector3(1.25f, -2.5f, 3.75f), static (stream, value) => stream.Write(value), static stream => stream.ReadVector3());
+        AssertRoundTrip(new Vector4(1.25f, -2.5f, 3.75f, -4.5f), static (stream, value) => stream.Write(value), static stream => stream.ReadVector4());
+        AssertRoundTrip(new Complex(1.25, -2.5), static (stream, value) => stream.Write(value), static stream => stream.ReadComplex());
+        AssertRoundTrip(Quaternion.CreateFromYawPitchRoll(0.25f, -0.5f, 0.75f), static (stream, value) => stream.Write(value), static stream => stream.ReadQuaternion());
+        AssertRoundTrip(new Plane(new Vector3(1, 2, 3), -4), static (stream, value) => stream.Write(value), static stream => stream.ReadPlane());
+        AssertRoundTrip(Matrix3x2.CreateRotation(0.25f) * Matrix3x2.CreateTranslation(2, -3), static (stream, value) => stream.Write(value), static stream => stream.ReadMatrix3x2());
+        AssertRoundTrip(Matrix4x4.CreateRotationX(0.25f) * Matrix4x4.CreateTranslation(2, -3, 4), static (stream, value) => stream.Write(value), static stream => stream.ReadMatrix4x4());
+        AssertRoundTrip(BigInteger.Pow(2, 200) - 12345, static (stream, value) => stream.Write(value), static stream => stream.ReadBigInteger());
+
+        AssertMemoryRoundTrip();
+        AssertBitArrayRoundTrip();
+        AssertDirectByteWrites();
+        AssertDisposedWritesRejected();
+        AssertNullBitArrayRejected();
+    }
+
+    /// <summary>
+    /// Writes one scalar through its public overload and reads it through the documented counterpart.<br/>
+    /// The check requires value equivalence and exact consumption of the written representation.<br/>
+    /// </summary>
+    /// <typeparam name="T">The scalar value type.<br/></typeparam>
+    /// <param name="expected">The value expected after decoding.<br/></param>
+    /// <param name="write">The public scalar writer under test.<br/></param>
+    /// <param name="read">The documented matching scalar reader.<br/></param>
+    /// <param name="equals">An optional equality function for values whose default equality omits serialized state.<br/></param>
+    private static void AssertRoundTrip<T>(T expected, Action<BufferStream, T> write, Func<BufferStream, T> read, Func<T, T, bool>? equals = null)
+    {
+        using var stream = new BufferStream();
+        write(stream, expected);
+        stream.Position = 0;
+
+        T actual = read(stream);
+        bool equivalent = equals?.Invoke(expected, actual) ?? EqualityComparer<T>.Default.Equals(expected, actual);
+        if (!equivalent || stream.Position != stream.Length)
+            throw new InvalidDataException($"{write.Method.Name}/{read.Method.Name} did not preserve the scalar value and consume exactly its representation.");
+    }
+
+    /// <summary>
+    /// Verifies that the memory overload emits the documented byte-length-prefixed payload.<br/>
+    /// The source is copied, decoded through the byte reader, and consumed as one complete frame.<br/>
+    /// </summary>
+    private static void AssertMemoryRoundTrip()
+    {
+        byte[] expected = Enumerable.Range(0, 80).Select(static value => (byte)(value * 3)).ToArray();
+        using var stream = new BufferStream();
+        stream.Write(expected.AsMemory());
+        stream.Position = 0;
+
+        byte[] actual = stream.ReadBytesWithByteLength();
+        if (!actual.AsSpan().SequenceEqual(expected) || stream.Position != stream.Length)
+            throw new InvalidDataException("Write(Memory<byte>) did not preserve its framed byte payload.");
+    }
+
+    /// <summary>
+    /// Verifies packed-bit bytes and the separate logical bit count for a non-byte-aligned value.<br/>
+    /// Every logical bit must survive and the reader must consume the complete representation.<br/>
+    /// </summary>
+    private static void AssertBitArrayRoundTrip()
+    {
+        var expected = new BitArray(new[] { true, false, true, true, false, false, true, false, true, true, false });
+        using var stream = new BufferStream();
+        stream.Write(expected);
+        stream.Position = 0;
+
+        BitArray actual = stream.ReadBitArray();
+        if (actual.Length != expected.Length || stream.Position != stream.Length)
+            throw new InvalidDataException("Write(BitArray) did not preserve the logical bit count.");
+        for (int i = 0; i < expected.Length; i++)
+        {
+            if (actual[i] != expected[i])
+                throw new InvalidDataException($"Write(BitArray) changed bit {i}.");
+        }
+    }
+
+    /// <summary>
+    /// Verifies the three unframed byte-range entry points in one deterministic byte sequence.<br/>
+    /// The standard override, span overload, and array-range overload must concatenate without adding prefixes.<br/>
+    /// </summary>
+    private static void AssertDirectByteWrites()
+    {
+        byte[] source = Enumerable.Range(0, 16).Select(static value => (byte)value).ToArray();
+        using var stream = new BufferStream();
+        stream.Write(source, 1, 4);
+        stream.WriteBytes(source.AsSpan(5, 3));
+        stream.WriteBytes(source, 8, 2);
+        stream.Position = 0;
+
+        byte[] actual = stream.ReadBytes(9);
+        byte[] expected = source.AsSpan(1, 9).ToArray();
+        if (!actual.AsSpan().SequenceEqual(expected) || stream.Position != stream.Length)
+            throw new InvalidDataException("The unframed direct-byte writers changed data or emitted a prefix.");
+    }
+
+    /// <summary>
+    /// Verifies that shared capacity-based write paths reject disposed streams before touching pooled storage.<br/>
+    /// Both a scalar path and the span path are exercised because they previously reached the same unguarded helper.<br/>
+    /// </summary>
+    private static void AssertDisposedWritesRejected()
+    {
+        var scalar = new BufferStream();
+        scalar.Dispose();
+        ExpectException<ObjectDisposedException>(static stream => stream.Write(42), scalar, "disposed scalar write");
+
+        var span = new BufferStream();
+        span.Dispose();
+        try
+        {
+            span.WriteBytes(new byte[] { 1, 2, 3 }.AsSpan());
+            throw new InvalidDataException("The disposed span write was accepted.");
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Verifies that a null bit array produces the documented argument exception.<br/>
+    /// This prevents an implementation-detail null-reference exception from escaping the public API.<br/>
+    /// </summary>
+    private static void AssertNullBitArrayRejected()
+    {
+        using var stream = new BufferStream();
+        ExpectException<ArgumentNullException>(static candidate => candidate.Write((BitArray)null!), stream, "null bit-array write");
+    }
+
+    /// <summary>
+    /// Requires an operation to throw the specified exception type.<br/>
+    /// A successful operation is converted into an explicit smoke-test failure with the supplied scenario name.<br/>
+    /// </summary>
+    /// <typeparam name="TException">The required exception type.<br/></typeparam>
+    /// <param name="operation">The operation expected to fail.<br/></param>
+    /// <param name="stream">The stream supplied to the operation.<br/></param>
+    /// <param name="scenario">A concise scenario name for diagnostics.<br/></param>
+    private static void ExpectException<TException>(Action<BufferStream> operation, BufferStream stream, string scenario)
+        where TException : Exception
+    {
+        try
+        {
+            operation(stream);
+            throw new InvalidDataException($"The {scenario} was accepted.");
+        }
+        catch (TException)
+        {
         }
     }
 }
