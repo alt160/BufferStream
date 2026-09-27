@@ -714,7 +714,8 @@ namespace System.IO
 
         private T ReadPrimitive<T>() where T : unmanaged
         {
-            int size = Marshal.SizeOf<T>();
+            EnsureNotDisposed();
+            int size = Unsafe.SizeOf<T>();
             if (_position + size > EffectiveLength)
                 throw new EndOfStreamException();
 
@@ -993,9 +994,30 @@ namespace System.IO
 
         public bool[] ReadBoolsWithLength() => ReadArrayWithLength<bool>();
 
+        /// <summary>
+        /// Gets the byte at a logical index without changing <see cref="Position"/>.<br/>
+        /// The index is relative to this stream or segment, not its root owner's backing buffer.
+        /// </summary>
+        /// <param name="index">The zero-based logical byte index.</param>
+        /// <returns>The byte at <paramref name="index"/>.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException"><paramref name="index"/> is outside the current logical length.</exception>
         public byte this[int index] => PeekByte(index);
 
-        public byte PeekByte() => BufferMemory.Span[BaseOffset + _position];
+        /// <summary>
+        /// Gets the byte at the current position without advancing <see cref="Position"/>.<br/>
+        /// Use <see cref="ReadByte"/> when the cursor should advance after the byte is read.
+        /// </summary>
+        /// <returns>The byte at the current position.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">The current position is at the end of this stream or segment.</exception>
+        public byte PeekByte()
+        {
+            EnsureNotDisposed();
+            if (_position >= EffectiveLength)
+                throw new EndOfStreamException();
+            return BufferMemory.Span[BaseOffset + _position];
+        }
 
         /// <summary>
         /// Reads one byte and advances this live cursor only when a byte is available.<br/>
@@ -1013,8 +1035,17 @@ namespace System.IO
             return BufferMemory.Span[BaseOffset + _position++];
         }
 
+        /// <summary>
+        /// Gets the byte at a logical index without changing <see cref="Position"/>.<br/>
+        /// The index is relative to this stream or segment, not its root owner's backing buffer.
+        /// </summary>
+        /// <param name="index">The zero-based logical byte index.</param>
+        /// <returns>The byte at <paramref name="index"/>.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException"><paramref name="index"/> is outside the current logical length.</exception>
         public byte PeekByte(int index)
         {
+            EnsureNotDisposed();
             if (index < 0 || index >= EffectiveLength)
                 throw new EndOfStreamException();
             return BufferMemory.Span[BaseOffset + index];
@@ -1034,17 +1065,52 @@ namespace System.IO
 
         public byte[] ReadBytesWithLength() => ReadArrayWithLength<byte>();
 
+        /// <summary>
+        /// Reads the fixed-width <see cref="char"/> value at the current position and advances the cursor by its in-memory size.<br/>
+        /// This is the direct counterpart of <see cref="Write(char)"/>.
+        /// </summary>
+        /// <returns>The decoded character.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A complete character does not remain in this stream or segment.</exception>
         public char ReadChar() => ReadPrimitive<char>();
 
         //chars
         public char[] ReadCharsWithLength() => ReadArrayWithLength<char>();
 
+        /// <summary>
+        /// Reads a <see cref="Complex"/> value from its real and imaginary <see cref="double"/> components.<br/>
+        /// This is the counterpart of <see cref="Write(Complex)"/>; a truncated value can advance the cursor after its real component is read.
+        /// </summary>
+        /// <returns>The decoded complex value.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A complete complex value does not remain in this stream or segment.</exception>
         public Complex ReadComplex() { return new Complex(ReadPrimitive<double>(), ReadPrimitive<double>()); }
 
+        /// <summary>
+        /// Reads the fixed-width <see cref="DateOnly"/> value at the current position and advances the cursor by its in-memory size.<br/>
+        /// This is the direct counterpart of <see cref="Write(DateOnly)"/>.
+        /// </summary>
+        /// <returns>The decoded date.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A complete date value does not remain in this stream or segment.</exception>
         public DateOnly ReadDateOnly() => ReadPrimitive<DateOnly>();
 
+        /// <summary>
+        /// Reads a <see cref="DateTime"/> from the binary value produced by <see cref="DateTime.ToBinary"/>.<br/>
+        /// This is the counterpart of <see cref="Write(DateTime)"/> and advances the cursor by eight bytes.
+        /// </summary>
+        /// <returns>The decoded date and time.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Eight bytes do not remain in this stream or segment.</exception>
         public DateTime ReadDateTime() => DateTime.FromBinary(ReadInt64());
 
+        /// <summary>
+        /// Reads a <see cref="decimal"/> from its four serialized <see cref="int"/> components.<br/>
+        /// This is the counterpart of <see cref="Write(decimal)"/>; a truncated value can advance the cursor after one or more components are read.
+        /// </summary>
+        /// <returns>The decoded decimal value.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A complete decimal value does not remain in this stream or segment.</exception>
         public decimal ReadDecimal()
         {
             int[] bits = new int[4];
@@ -1054,6 +1120,13 @@ namespace System.IO
             return value;
         }
 
+        /// <summary>
+        /// Reads the fixed-width <see cref="double"/> value at the current position and advances the cursor by eight bytes.<br/>
+        /// This is the direct counterpart of <see cref="Write(double)"/>.
+        /// </summary>
+        /// <returns>The decoded double-precision floating-point value.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Eight bytes do not remain in this stream or segment.</exception>
         public double ReadDouble() => ReadPrimitive<double>();
 
         //doubles
@@ -1062,34 +1135,91 @@ namespace System.IO
         //floats
         public float[] ReadFloats() => ReadArrayWithLength<float>();
 
+        /// <summary>
+        /// Reads the fixed-width <see cref="Guid"/> value at the current position and advances the cursor by sixteen bytes.<br/>
+        /// This is the direct counterpart of <see cref="Write(Guid)"/>.
+        /// </summary>
+        /// <returns>The decoded globally unique identifier.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Sixteen bytes do not remain in this stream or segment.</exception>
         public Guid ReadGuid() => ReadPrimitive<Guid>();
 
         // halfs
         public Half[] ReadHalfs() => ReadArrayWithLength<Half>();
 
+        /// <summary>
+        /// Reads the fixed-width <see cref="Int128"/> value at the current position and advances the cursor by sixteen bytes.<br/>
+        /// This is the direct counterpart of <see cref="Write(Int128)"/>.
+        /// </summary>
+        /// <returns>The decoded signed 128-bit integer.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Sixteen bytes do not remain in this stream or segment.</exception>
         public Int128 ReadInt128() => ReadPrimitive<Int128>();
 
         //int128s
         public Int128[] ReadInt128s() => ReadArrayWithLength<Int128>();
 
+        /// <summary>
+        /// Reads the signed byte at the current position and advances the cursor by one byte.<br/>
+        /// This is the direct counterpart of <see cref="Write(sbyte)"/>.
+        /// </summary>
+        /// <returns>The decoded signed byte.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A byte does not remain in this stream or segment.</exception>
         public sbyte ReadSByte() => ReadPrimitive<sbyte>();
+
+        /// <summary>
+        /// Reads the fixed-width <see cref="short"/> value at the current position and advances the cursor by two bytes.<br/>
+        /// This is the direct counterpart of <see cref="Write(short)"/>.
+        /// </summary>
+        /// <returns>The decoded signed 16-bit integer.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Two bytes do not remain in this stream or segment.</exception>
         public short ReadInt16() => ReadPrimitive<short>();
 
         // shorts
         public short[] ReadInt16s() => ReadArrayWithLength<short>();
 
+        /// <summary>
+        /// Reads the fixed-width <see cref="int"/> value at the current position and advances the cursor by four bytes.<br/>
+        /// This is the direct counterpart of <see cref="Write(int)"/>.
+        /// </summary>
+        /// <returns>The decoded signed 32-bit integer.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Four bytes do not remain in this stream or segment.</exception>
         public int ReadInt32() => ReadPrimitive<int>();
 
         //ints
         public int[] ReadInt32s() => ReadArrayWithLength<int>();
 
+        /// <summary>
+        /// Reads the fixed-width <see cref="long"/> value at the current position and advances the cursor by eight bytes.<br/>
+        /// This is the direct counterpart of <see cref="Write(long)"/>.
+        /// </summary>
+        /// <returns>The decoded signed 64-bit integer.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Eight bytes do not remain in this stream or segment.</exception>
         public long ReadInt64() => ReadPrimitive<long>();
 
         //longs
         public long[] ReadInt64s() => ReadArrayWithLength<long>();
 
+        /// <summary>
+        /// Reads a <see cref="Matrix3x2"/> from six serialized <see cref="float"/> components.<br/>
+        /// This is the counterpart of <see cref="Write(Matrix3x2)"/>; a truncated value can advance the cursor after one or more components are read.
+        /// </summary>
+        /// <returns>The decoded matrix.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A complete matrix does not remain in this stream or segment.</exception>
         public Matrix3x2 ReadMatrix3x2() { return new Matrix3x2(ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>()); }
 
+        /// <summary>
+        /// Reads a <see cref="Matrix4x4"/> from sixteen serialized <see cref="float"/> components.<br/>
+        /// This is the counterpart of <see cref="Write(Matrix4x4)"/>; a truncated value can advance the cursor after one or more components are read.
+        /// </summary>
+        /// <returns>The decoded matrix.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A complete matrix does not remain in this stream or segment.</exception>
         public Matrix4x4 ReadMatrix4x4() { return new Matrix4x4(ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>()); }
 
         /// <summary>
@@ -1120,14 +1250,43 @@ namespace System.IO
             return GetWritableSpan(offset, count);
         }
 
+        /// <summary>
+        /// Reads a <see cref="Plane"/> from a serialized normal vector and distance component.<br/>
+        /// This is the counterpart of <see cref="Write(Plane)"/>; a truncated value can advance the cursor after one or more components are read.
+        /// </summary>
+        /// <returns>The decoded plane.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A complete plane does not remain in this stream or segment.</exception>
         public Plane ReadPlane() { return new Plane(ReadVector3(), ReadPrimitive<float>()); }
 
+        /// <summary>
+        /// Reads a <see cref="Quaternion"/> from four serialized <see cref="float"/> components.<br/>
+        /// This is the counterpart of <see cref="Write(Quaternion)"/>; a truncated value can advance the cursor after one or more components are read.
+        /// </summary>
+        /// <returns>The decoded quaternion.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A complete quaternion does not remain in this stream or segment.</exception>
         public Quaternion ReadQuaternion() { return new Quaternion(ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>()); }
 
+        /// <summary>
+        /// Reads a Unicode scalar value stored as a signed 32-bit integer and constructs a <see cref="Rune"/>.<br/>
+        /// This is the counterpart of <see cref="Write(Rune)"/>.
+        /// </summary>
+        /// <returns>The decoded Unicode scalar value.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Four bytes do not remain in this stream or segment.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">The stored value is not a valid Unicode scalar value.</exception>
         public Rune ReadRune() => new Rune(ReadInt32());
 
         public sbyte[] ReadSBytesWithLength() => ReadArrayWithLength<sbyte>();
 
+        /// <summary>
+        /// Reads the fixed-width <see cref="float"/> value at the current position and advances the cursor by four bytes.<br/>
+        /// This is the direct counterpart of <see cref="Write(float)"/>.
+        /// </summary>
+        /// <returns>The decoded single-precision floating-point value.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Four bytes do not remain in this stream or segment.</exception>
         public float ReadSingle() => ReadPrimitive<float>();
 
         public string? ReadString()
@@ -1153,44 +1312,116 @@ namespace System.IO
             return result;
         }
 
+        /// <summary>
+        /// Reads a <see cref="TimeOnly"/> from its serialized tick count.<br/>
+        /// This is the counterpart of <see cref="Write(TimeOnly)"/> and advances the cursor by eight bytes.
+        /// </summary>
+        /// <returns>The decoded time of day.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Eight bytes do not remain in this stream or segment.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">The stored tick count is outside the range accepted by <see cref="TimeOnly"/>.</exception>
         public TimeOnly ReadTimeOnly()
         {
             long ticks = ReadInt64();
             return new TimeOnly(ticks);
         }
 
+        /// <summary>
+        /// Reads a <see cref="TimeSpan"/> from its serialized tick count.<br/>
+        /// This is the counterpart of <see cref="Write(TimeSpan)"/> and advances the cursor by eight bytes.
+        /// </summary>
+        /// <returns>The decoded time interval.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Eight bytes do not remain in this stream or segment.</exception>
         public TimeSpan ReadTimeSpan()
         {
             long ticks = ReadInt64();
             return new TimeSpan(ticks);
         }
 
+        /// <summary>
+        /// Reads a <see cref="DateTimeOffset"/> from a serialized <see cref="DateTime"/> followed by its offset <see cref="TimeSpan"/>.<br/>
+        /// This is the counterpart of <see cref="Write(DateTimeOffset)"/>; a truncated value can advance the cursor after its date and time are read.
+        /// </summary>
+        /// <returns>The decoded date and time with offset.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A complete date and offset do not remain in this stream or segment.</exception>
+        /// <exception cref="ArgumentException">The decoded offset is invalid for the decoded date and time.</exception>
         public DateTimeOffset ReadDateTimeOffset() => new DateTimeOffset(ReadDateTime(), ReadTimeSpan());
 
+        /// <summary>
+        /// Reads the fixed-width <see cref="UInt128"/> value at the current position and advances the cursor by sixteen bytes.<br/>
+        /// This is the direct counterpart of <see cref="Write(UInt128)"/>.
+        /// </summary>
+        /// <returns>The decoded unsigned 128-bit integer.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Sixteen bytes do not remain in this stream or segment.</exception>
         public UInt128 ReadUInt128() => ReadPrimitive<UInt128>();
 
         //uint128s
         public UInt128[] ReadUInt128s() => ReadArrayWithLength<UInt128>();
 
+        /// <summary>
+        /// Reads the fixed-width <see cref="ushort"/> value at the current position and advances the cursor by two bytes.<br/>
+        /// This is the direct counterpart of <see cref="Write(ushort)"/>.
+        /// </summary>
+        /// <returns>The decoded unsigned 16-bit integer.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Two bytes do not remain in this stream or segment.</exception>
         public ushort ReadUInt16() => ReadPrimitive<ushort>();
 
         //ushorts
         public ushort[] ReadUInt16s() => ReadArrayWithLength<ushort>();
 
+        /// <summary>
+        /// Reads the fixed-width <see cref="uint"/> value at the current position and advances the cursor by four bytes.<br/>
+        /// This is the direct counterpart of <see cref="Write(uint)"/>.
+        /// </summary>
+        /// <returns>The decoded unsigned 32-bit integer.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Four bytes do not remain in this stream or segment.</exception>
         public uint ReadUInt32() => ReadPrimitive<uint>();
 
         //uints
         public uint[] ReadUInt32s() => ReadArrayWithLength<uint>();
 
+        /// <summary>
+        /// Reads the fixed-width <see cref="ulong"/> value at the current position and advances the cursor by eight bytes.<br/>
+        /// This is the direct counterpart of <see cref="Write(ulong)"/>.
+        /// </summary>
+        /// <returns>The decoded unsigned 64-bit integer.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">Eight bytes do not remain in this stream or segment.</exception>
         public ulong ReadUInt64() => ReadPrimitive<ulong>();
 
         //ulongs
         public ulong[] ReadUInt64s() => ReadArrayWithLength<ulong>();
 
+        /// <summary>
+        /// Reads a <see cref="Vector2"/> from two serialized <see cref="float"/> components.<br/>
+        /// This is the counterpart of <see cref="Write(Vector2)"/>; a truncated value can advance the cursor after one component is read.
+        /// </summary>
+        /// <returns>The decoded vector.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A complete vector does not remain in this stream or segment.</exception>
         public Vector2 ReadVector2() { return new Vector2(ReadPrimitive<float>(), ReadPrimitive<float>()); }
 
+        /// <summary>
+        /// Reads a <see cref="Vector3"/> from three serialized <see cref="float"/> components.<br/>
+        /// This is the counterpart of <see cref="Write(Vector3)"/>; a truncated value can advance the cursor after one or more components are read.
+        /// </summary>
+        /// <returns>The decoded vector.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A complete vector does not remain in this stream or segment.</exception>
         public Vector3 ReadVector3() { return new Vector3(ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>()); }
 
+        /// <summary>
+        /// Reads a <see cref="Vector4"/> from four serialized <see cref="float"/> components.<br/>
+        /// This is the counterpart of <see cref="Write(Vector4)"/>; a truncated value can advance the cursor after one or more components are read.
+        /// </summary>
+        /// <returns>The decoded vector.</returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.</exception>
+        /// <exception cref="EndOfStreamException">A complete vector does not remain in this stream or segment.</exception>
         public Vector4 ReadVector4() { return new Vector4(ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>(), ReadPrimitive<float>()); }
 
         public Version[] ReadVersionsWithLength()
