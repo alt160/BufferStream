@@ -57,6 +57,7 @@ CollectionRoundTripSmoke.Run();
 ScalarWriteRoundTripSmoke.Run();
 PositionalWriteSmoke.Run();
 SevenBitEncodingSmoke.Run();
+DirectReaderConversionEqualitySmoke.Run();
 
 Console.WriteLine("BufferStream package smoke test passed.");
 
@@ -783,6 +784,228 @@ internal static class SevenBitEncodingSmoke
         }
         catch (TException)
         {
+        }
+    }
+}
+
+internal static class DirectReaderConversionEqualitySmoke
+{
+    /// <summary>
+    /// Exercises the final direct-reader, conversion, and equality documentation-warning group through the installed package.<br/>
+    /// The checks cover malformed frames, logical-length boundaries, storage borrowing versus copying, null conversions, content equality, and disposal safety.<br/>
+    /// </summary>
+    public static void Run()
+    {
+        AssertDirectReaders();
+        AssertConversionOwnership();
+        AssertEqualityContract();
+    }
+
+    /// <summary>
+    /// Verifies arbitrary integers, partial byte reads, strict nullable-string framing, and exact packed-bit logical lengths.<br/>
+    /// Malformed inputs must report domain-specific exceptions without reading beyond logical stream length.<br/>
+    /// </summary>
+    private static void AssertDirectReaders()
+    {
+        BigInteger expectedInteger = -BigInteger.Pow(2, 300) + 12345;
+        using (var integer = new BufferStream())
+        {
+            integer.Write(expectedInteger);
+            integer.Position = 0;
+            if (integer.ReadBigInteger() != expectedInteger || integer.Position != integer.Length)
+                throw new InvalidDataException("ReadBigInteger did not preserve the framed arbitrary-precision value.");
+        }
+
+        using (var bytes = new BufferStream())
+        {
+            bytes.WriteBytes(new byte[] { 1, 2, 3 });
+            bytes.Position = 1;
+            if (!bytes.ReadBytes(10).AsSpan().SequenceEqual(new byte[] { 2, 3 }) || bytes.Position != bytes.Length)
+                throw new InvalidDataException("ReadBytes did not return the available suffix at end-of-stream.");
+            if (bytes.ReadBytes(10).Length != 0 || bytes.Position != bytes.Length)
+                throw new InvalidDataException("ReadBytes did not return an empty array at end-of-stream.");
+            ExpectException<ArgumentOutOfRangeException>(static stream => _ = stream.ReadBytes(-1), bytes, "negative direct-byte count");
+        }
+
+        var disposedBytes = new BufferStream();
+        disposedBytes.WriteBytes(new byte[] { 1, 2, 3 });
+        disposedBytes.Position = 0;
+        disposedBytes.Dispose();
+        ExpectException<ObjectDisposedException>(static stream => _ = stream.ReadBytes(3), disposedBytes, "disposed direct-byte reader");
+
+        using (var invalidNullMarker = new BufferStream())
+        {
+            invalidNullMarker.Write7BitEncodedInt(-2);
+            invalidNullMarker.Position = 0;
+            ExpectException<InvalidDataException>(static stream => _ = stream.ReadString(), invalidNullMarker, "invalid negative string marker");
+            if (invalidNullMarker.Position != invalidNullMarker.Length)
+                throw new InvalidDataException("The invalid string marker did not consume exactly its prefix.");
+        }
+
+        using (var truncatedString = new BufferStream())
+        {
+            truncatedString.Write7BitEncodedInt(5);
+            truncatedString.WriteBytes(new byte[] { (byte)'A', (byte)'B' });
+            truncatedString.Position = 0;
+            ExpectException<EndOfStreamException>(static stream => _ = stream.ReadString(), truncatedString, "truncated string payload");
+            if (truncatedString.Position != 1)
+                throw new InvalidDataException("The truncated string reader advanced into the incomplete payload.");
+        }
+
+        AssertMalformedBitArray(new byte[] { 1 }, 9, "logical bit count exceeding payload");
+        AssertMalformedBitArray(new byte[] { 1, 2 }, 1, "oversized packed-bit payload");
+    }
+
+    /// <summary>
+    /// Verifies the documented borrowed-storage contracts for memory, read-only memory, arrays, and accessible memory streams.<br/>
+    /// Span conversion must instead create an independent copy, and nullable reference conversions must reject null explicitly.<br/>
+    /// </summary>
+    private static void AssertConversionOwnership()
+    {
+        byte[] memoryStorage = { 1, 2, 3 };
+        using (BufferStream stream = memoryStorage.AsMemory())
+        {
+            stream.WriteAtOffset(0, (byte)9);
+            if (memoryStorage[0] != 9)
+                throw new InvalidDataException("Memory<byte> conversion did not preserve borrowed writable storage.");
+        }
+
+        byte[] readOnlyStorage = { 1, 2, 3 };
+        ReadOnlyMemory<byte> readOnlyMemory = readOnlyStorage.AsMemory();
+        using (BufferStream stream = readOnlyMemory)
+        {
+            stream.WriteAtOffset(0, (byte)9);
+            if (readOnlyStorage[0] != 9)
+                throw new InvalidDataException("Array-backed ReadOnlyMemory<byte> conversion did not preserve its documented borrowed storage.");
+        }
+
+        byte[] arrayStorage = { 1, 2, 3 };
+        using (BufferStream stream = arrayStorage)
+        {
+            stream.WriteAtOffset(1, (byte)9);
+            if (arrayStorage[1] != 9)
+                throw new InvalidDataException("Byte-array conversion did not preserve borrowed writable storage.");
+        }
+
+        byte[] spanStorage = { 1, 2, 3 };
+        Span<byte> sourceSpan = spanStorage;
+        using (BufferStream stream = sourceSpan)
+        {
+            spanStorage[0] = 9;
+            stream.WriteAtOffset(1, (byte)8);
+            if (stream.PeekByte(0) != 1 || spanStorage[1] != 2)
+                throw new InvalidDataException("Span<byte> conversion did not isolate its copied storage.");
+        }
+
+        byte[] memoryStreamStorage = { 1, 2, 3 };
+        using (var source = new MemoryStream(memoryStreamStorage, 0, memoryStreamStorage.Length, writable: true, publiclyVisible: true))
+        using (BufferStream stream = source)
+        {
+            stream.WriteAtOffset(2, (byte)9);
+            if (memoryStreamStorage[2] != 9 || source.Position != 0)
+                throw new InvalidDataException("MemoryStream conversion did not preserve zero-copy storage and source position.");
+        }
+
+        byte[]? nullArray = null;
+        ExpectException<ArgumentNullException>(
+            _ =>
+            {
+                BufferStream converted = nullArray!;
+                converted.Dispose();
+            },
+            new BufferStream(),
+            "null byte-array conversion");
+
+        MemoryStream? nullMemoryStream = null;
+        ExpectException<ArgumentNullException>(
+            _ =>
+            {
+                BufferStream converted = nullMemoryStream!;
+                converted.Dispose();
+            },
+            new BufferStream(),
+            "null memory-stream conversion");
+    }
+
+    /// <summary>
+    /// Verifies byte-content equality independent of cursor position, matching hashes for equal content, null operators, and disposal guards.<br/>
+    /// Reference identity remains reflexive after disposal, while distinct disposed instances reject content inspection.<br/>
+    /// </summary>
+    private static void AssertEqualityContract()
+    {
+        using var left = new BufferStream();
+        using var right = new BufferStream();
+        using var different = new BufferStream();
+        left.WriteBytes(new byte[] { 1, 2, 3, 4 });
+        right.WriteBytes(new byte[] { 1, 2, 3, 4 });
+        different.WriteBytes(new byte[] { 1, 2, 9, 4 });
+        left.Position = 1;
+        right.Position = 3;
+
+        if (!left.Equals(right) || !left.Equals((object)right) || left != right || !(left == right))
+            throw new InvalidDataException("Equal BufferStream contents did not satisfy the equality contract.");
+        if (left.GetHashCode() != right.GetHashCode())
+            throw new InvalidDataException("Equal BufferStream contents produced different hash codes.");
+        if (left.Equals(different) || left == different || !(left != different))
+            throw new InvalidDataException("Different BufferStream contents compared equal.");
+
+        BufferStream? nullLeft = null;
+        BufferStream? nullRight = null;
+        if (!(nullLeft == nullRight) || nullLeft != nullRight || left == nullLeft || !(left != nullLeft))
+            throw new InvalidDataException("BufferStream null operators violated their documented contract.");
+
+        var disposedIdentity = new BufferStream();
+        BufferStream disposedAlias = disposedIdentity;
+        disposedIdentity.Dispose();
+        if (!disposedIdentity.Equals(disposedAlias) || !(disposedIdentity == disposedAlias))
+            throw new InvalidDataException("Reference identity was not reflexive after disposal.");
+        ExpectException<ObjectDisposedException>(static stream => _ = stream.GetHashCode(), disposedIdentity, "disposed hash-code operation");
+
+        var disposedOther = new BufferStream();
+        disposedOther.Dispose();
+        ExpectException<ObjectDisposedException>(stream => _ = stream.Equals(disposedOther), disposedIdentity, "distinct disposed equality operation");
+    }
+
+    /// <summary>
+    /// Builds one inconsistent packed-bit frame and requires <see cref="BufferStream.ReadBitArray"/> to reject it after consuming the frame.<br/>
+    /// </summary>
+    /// <param name="payload">The framed packed-byte payload.<br/></param>
+    /// <param name="bitCount">The inconsistent logical bit count suffix.<br/></param>
+    /// <param name="scenario">A concise scenario name for diagnostics.<br/></param>
+    private static void AssertMalformedBitArray(byte[] payload, int bitCount, string scenario)
+    {
+        using var stream = new BufferStream();
+        stream.WriteBytesWithByteLength(payload);
+        stream.Write7BitEncodedInt(bitCount);
+        stream.Position = 0;
+        ExpectException<InvalidDataException>(static candidate => _ = candidate.ReadBitArray(), stream, scenario);
+        if (stream.Position != stream.Length)
+            throw new InvalidDataException($"The {scenario} frame was not consumed consistently before rejection.");
+    }
+
+    /// <summary>
+    /// Requires an operation to throw the specified exception type.<br/>
+    /// A successful operation is converted into an explicit smoke-test failure with the supplied scenario name.<br/>
+    /// </summary>
+    /// <typeparam name="TException">The required exception type.<br/></typeparam>
+    /// <param name="operation">The operation expected to fail.<br/></param>
+    /// <param name="stream">The stream supplied to the operation.<br/></param>
+    /// <param name="scenario">A concise scenario name for diagnostics.<br/></param>
+    private static void ExpectException<TException>(Action<BufferStream> operation, BufferStream stream, string scenario)
+        where TException : Exception
+    {
+        try
+        {
+            operation(stream);
+            throw new InvalidDataException($"The {scenario} was accepted.");
+        }
+        catch (TException)
+        {
+        }
+        finally
+        {
+            if (scenario.StartsWith("null ", StringComparison.Ordinal))
+                stream.Dispose();
         }
     }
 }

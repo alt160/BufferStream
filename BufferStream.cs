@@ -35,14 +35,27 @@ namespace System.IO
     /// Supports random-access reads, writes, seeks, and can return its buffer to the pool on Dispose.
     /// </summary>
     //====== TYPES ======
-    public sealed class BufferStream : Stream
+    public sealed class BufferStream : Stream, IEquatable<BufferStream>
     {
 
 
 
 
-        public static implicit operator BufferStream (Memory<byte> segment) => new BufferStream(segment);
-        public static implicit operator BufferStream (ReadOnlyMemory<byte> segment) => new BufferStream(segment);
+        /// <summary>
+        /// Creates a non-owning writable stream view over the supplied memory without copying it.<br/>
+        /// Mutations are visible through both views, and disposing the stream does not release or clear the caller-owned memory.<br/>
+        /// </summary>
+        /// <param name="segment">The writable memory to borrow as the complete initial stream contents.<br/></param>
+        /// <returns>A writable borrowed stream positioned at zero.<br/></returns>
+        public static implicit operator BufferStream(Memory<byte> segment) => new BufferStream(segment);
+
+        /// <summary>
+        /// Creates a writable stream from read-only memory, borrowing array-backed storage when available and otherwise copying it.<br/>
+        /// The read-only wrapper does not enforce immutability: mutations through the stream are visible when its storage was borrowed.<br/>
+        /// </summary>
+        /// <param name="segment">The read-only memory supplying the complete initial stream contents.<br/></param>
+        /// <returns>A writable stream positioned at zero.<br/></returns>
+        public static implicit operator BufferStream(ReadOnlyMemory<byte> segment) => new BufferStream(segment);
 
 
 
@@ -981,9 +994,33 @@ namespace System.IO
             return result;
         }
 
+        /// <summary>
+        /// Reads an arbitrary-precision integer from a byte-length-prefixed little-endian two's-complement payload.<br/>
+        /// This is the counterpart of <see cref="Write(BigInteger)"/>; malformed or truncated byte framing is rejected by the shared byte-array reader.<br/>
+        /// </summary>
+        /// <returns>The decoded arbitrary-precision integer.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">The framed payload is truncated.<br/></exception>
+        /// <exception cref="InvalidDataException">The byte-length prefix is negative or exceeds its encoded integer width.<br/></exception>
         public BigInteger ReadBigInteger() => new BigInteger(ReadBytesWithByteLength());
 
-        public BitArray ReadBitArray() => new BitArray(ReadBytesWithByteLength()) { Length = Read7BitEncodedInt() };
+        /// <summary>
+        /// Reads packed bits from a byte-length-prefixed payload followed by its signed seven-bit logical bit count.<br/>
+        /// This is the counterpart of <see cref="Write(BitArray)"/>; the payload byte count must equal the minimum number of bytes required by the logical count.<br/>
+        /// </summary>
+        /// <returns>A newly allocated bit array with the serialized logical length.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">The byte payload or logical-count suffix is truncated.<br/></exception>
+        /// <exception cref="InvalidDataException">The payload framing or logical bit count is invalid or inconsistent.<br/></exception>
+        public BitArray ReadBitArray()
+        {
+            byte[] bytes = ReadBytesWithByteLength();
+            int bitCount = Read7BitEncodedInt();
+            if (bitCount < 0 || (bitCount + 7L) / 8L != bytes.Length)
+                throw new InvalidDataException("The logical bit count does not match the packed byte payload.");
+
+            return new BitArray(bytes) { Length = bitCount };
+        }
 
         /// <summary>
         /// Gets the byte at a logical index without changing <see cref="Position"/>.<br/>
@@ -1042,8 +1079,17 @@ namespace System.IO
             return BufferMemory.Span[BaseOffset + index];
         }
 
+        /// <summary>
+        /// Reads up to <paramref name="count"/> unframed bytes from the current position.<br/>
+        /// Fewer bytes are returned at the end of the stream, including an empty array when no bytes remain.<br/>
+        /// </summary>
+        /// <param name="count">The maximum number of bytes to read.<br/></param>
+        /// <returns>A newly allocated array containing the bytes that were available.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is negative.<br/></exception>
         public byte[] ReadBytes(int count)
         {
+            EnsureNotDisposed();
             if (count < 0)
                 throw new ArgumentOutOfRangeException(nameof(count));
 
@@ -1252,10 +1298,25 @@ namespace System.IO
         /// <exception cref="EndOfStreamException">Four bytes do not remain in this stream or segment.</exception>
         public float ReadSingle() => ReadPrimitive<float>();
 
+        /// <summary>
+        /// Reads a nullable string whose encoded byte count is stored as a signed ZigZag seven-bit prefix.<br/>
+        /// A prefix of minus one represents <see langword="null"/>; zero represents an empty string.<br/>
+        /// </summary>
+        /// <returns>The decoded string, or <see langword="null"/> for the dedicated null marker.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="EndOfStreamException">The length prefix or encoded string payload is truncated.<br/></exception>
+        /// <exception cref="InvalidDataException">The decoded length is less than minus one or exceeds its encoded integer width.<br/></exception>
+        /// <exception cref="DecoderFallbackException">The configured encoding rejects malformed input bytes.<br/></exception>
         public string? ReadString()
         {
             int length = Read7BitEncodedInt();
-            if (length < 0) return null; // negative length indicates null
+            if (length == -1)
+                return null;
+            if (length < -1)
+                throw new InvalidDataException("A string length must be non-negative or the dedicated null marker.");
+            if (length > EffectiveLength - _position)
+                throw new EndOfStreamException();
+
             var span = GetReadOnlySpan(_position, length);
             string value = StringEncoding.GetString(span);
             _position += length;
@@ -2823,13 +2884,23 @@ namespace System.IO
         }
 
 
-        public override bool Equals(object? obj)
+        /// <summary>
+        /// Determines whether another stream currently contains the same logical byte sequence.<br/>
+        /// Position, capacity, ownership, and string encoding are not compared; two references to the same instance remain equal after disposal.<br/>
+        /// Distinct streams must both be usable because their contents are inspected.<br/>
+        /// </summary>
+        /// <param name="other">The stream to compare with this instance.<br/></param>
+        /// <returns><see langword="true"/> when both streams contain equal bytes in the same order; otherwise <see langword="false"/>.<br/></returns>
+        /// <exception cref="ObjectDisposedException">Either distinct stream or either stream's root owner has been disposed.<br/></exception>
+        public bool Equals(BufferStream? other)
         {
-            if (ReferenceEquals(this, obj))
+            if (ReferenceEquals(this, other))
                 return true;
-            if (obj is not BufferStream other)
+            if (other is null)
                 return false;
 
+            EnsureNotDisposed();
+            other.EnsureNotDisposed();
             int length = EffectiveLength;
             int otherLength = other.EffectiveLength;
 
@@ -2844,8 +2915,24 @@ namespace System.IO
                 .SequenceEqual(other.GetReadOnlySpan(0, otherLength));
         }
 
+        /// <summary>
+        /// Determines whether an object is a <see cref="BufferStream"/> with the same logical byte sequence as this instance.<br/>
+        /// The comparison delegates to <see cref="Equals(BufferStream?)"/> and ignores cursor position, capacity, ownership, and encoding.<br/>
+        /// </summary>
+        /// <param name="obj">The object to compare with this instance.<br/></param>
+        /// <returns><see langword="true"/> when <paramref name="obj"/> is a byte-for-byte equal stream; otherwise <see langword="false"/>.<br/></returns>
+        /// <exception cref="ObjectDisposedException">Either distinct stream or either stream's root owner has been disposed.<br/></exception>
+        public override bool Equals(object? obj) => obj is BufferStream other && Equals(other);
+
+        /// <summary>
+        /// Returns a content-derived hash based on the logical length and representative bytes.<br/>
+        /// Because stream contents are mutable, an instance must not be mutated while it is being used as a hash-table key.<br/>
+        /// </summary>
+        /// <returns>A hash code consistent with the current content-based equality contract.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
         public override int GetHashCode()
         {
+            EnsureNotDisposed();
             int length = EffectiveLength;
             if (length == 0) return 0;
             var span = BufferMemory.Span;
@@ -2874,6 +2961,14 @@ namespace System.IO
             UpdateLengthAfterWrite((int)(offset + length));
         }
 
+        /// <summary>
+        /// Determines whether two streams are the same reference or currently contain the same logical byte sequence.<br/>
+        /// Two null references compare equal; one null reference compares unequal.<br/>
+        /// </summary>
+        /// <param name="left">The left stream operand.<br/></param>
+        /// <param name="right">The right stream operand.<br/></param>
+        /// <returns><see langword="true"/> when the operands are both null, reference-identical, or byte-for-byte equal.<br/></returns>
+        /// <exception cref="ObjectDisposedException">Distinct non-null operands require content from a disposed stream or owner.<br/></exception>
         public static bool operator ==(BufferStream? left, BufferStream? right)
         {
             if (ReferenceEquals(left, right)) return true;
@@ -2881,12 +2976,52 @@ namespace System.IO
             return left.Equals(right);
         }
 
+        /// <summary>
+        /// Determines whether two streams are neither reference-identical nor byte-for-byte equal.<br/>
+        /// This is the logical complement of <see cref="operator ==(BufferStream?, BufferStream?)"/>.<br/>
+        /// </summary>
+        /// <param name="left">The left stream operand.<br/></param>
+        /// <param name="right">The right stream operand.<br/></param>
+        /// <returns><see langword="true"/> when the equality operator returns <see langword="false"/>.<br/></returns>
+        /// <exception cref="ObjectDisposedException">Distinct non-null operands require content from a disposed stream or owner.<br/></exception>
         public static bool operator !=(BufferStream? left, BufferStream? right) => !(left == right);
 
 
-        public static implicit operator BufferStream(byte[] buffer) => new BufferStream(buffer);
+        /// <summary>
+        /// Creates a non-owning writable stream view over an entire byte array without copying it.<br/>
+        /// Mutations are visible through both views, and disposing the stream does not return or clear the caller-owned array.<br/>
+        /// </summary>
+        /// <param name="buffer">The byte array to borrow as the complete initial stream contents.<br/></param>
+        /// <returns>A writable borrowed stream positioned at zero.<br/></returns>
+        /// <exception cref="ArgumentNullException"><paramref name="buffer"/> is <see langword="null"/>.<br/></exception>
+        public static implicit operator BufferStream(byte[] buffer)
+        {
+            ArgumentNullException.ThrowIfNull(buffer);
+            return new BufferStream(buffer.AsMemory());
+        }
+
+        /// <summary>
+        /// Creates an independently owned stream by copying the supplied span.<br/>
+        /// Later mutations of the source span do not affect the stream, and stream mutations do not affect the source.<br/>
+        /// </summary>
+        /// <param name="buffer">The span whose current bytes are copied as the complete initial stream contents.<br/></param>
+        /// <returns>An owning stream positioned at zero.<br/></returns>
         public static implicit operator BufferStream(Span<byte> buffer) => new BufferStream(buffer.ToArray());
-        public static implicit operator BufferStream(MemoryStream buffer) => new BufferStream(buffer);
+
+        /// <summary>
+        /// Creates a stream using the <see cref="BufferStream(MemoryStream, bool, bool, Encoding?)"/> constructor defaults.<br/>
+        /// An accessible source buffer is borrowed without copying; otherwise the remaining source bytes are copied into pooled storage.<br/>
+        /// The source stream is not disposed by this conversion.<br/>
+        /// </summary>
+        /// <param name="buffer">The memory stream supplying the initial contents.<br/></param>
+        /// <returns>A stream positioned at zero.<br/></returns>
+        /// <exception cref="ArgumentNullException"><paramref name="buffer"/> is <see langword="null"/>.<br/></exception>
+        /// <exception cref="IOException">The remaining source length is unsupported.<br/></exception>
+        public static implicit operator BufferStream(MemoryStream buffer)
+        {
+            ArgumentNullException.ThrowIfNull(buffer);
+            return new BufferStream(buffer);
+        }
 
         /// <summary>
         /// Removes one cached cursor from this root owner's pool, or creates a cursor without a backing-buffer allocation.<br/>
