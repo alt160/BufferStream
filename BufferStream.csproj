@@ -8,8 +8,8 @@
     <PackageId>BufferStream</PackageId>
     <Title>BufferStream</Title>
     <PackageVersion>1.0.0</PackageVersion>
-    <Authors>Eriq VanBibber</Authors>
-    <Copyright>Copyright (c) 2026 Eriq VanBibber</Copyright>
+    <Authors>alt160</Authors>
+    <Copyright>Copyright (c) 2026 alt160</Copyright>
     <Description>A pooled, reusable System.IO.Stream for low-allocation in-memory binary work, with direct typed serialization, borrowed-memory views, shallow segments, explicit framing, and cursor-preserving positional writes.</Description>
     <PackageTags>stream buffer binary serialization pooling arraypool low-allocation io memory</PackageTags>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
