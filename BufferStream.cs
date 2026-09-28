@@ -1145,7 +1145,7 @@ namespace System.IO
         /// <exception cref="EndOfStreamException">A complete decimal value does not remain in this stream or segment.</exception>
         public decimal ReadDecimal()
         {
-            int[] bits = new int[4];
+            Span<int> bits = stackalloc int[4];
             for (int i = 0; i < 4; i++)
                 bits[i] = ReadInt32();
             decimal value = new decimal(bits);
@@ -2197,7 +2197,17 @@ namespace System.IO
         /// <param name="value">The byte memory whose current contents are copied into the stream.<br/></param>
         /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
         /// <exception cref="ArgumentOutOfRangeException">The framed write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
-        public void Write(Memory<byte> value) => WriteBytesWithByteLength(value.ToArray());
+        public void Write(Memory<byte> value)
+        {
+            int byteCount = value.Length;
+            int lengthSize = Get7BitEncodedIntSize(byteCount);
+            EnsureCapacity(_position + byteCount + lengthSize);
+
+            Write7BitEncodedInt(byteCount);
+            value.Span.CopyTo(GetWritableSpan(_position, byteCount));
+            _position += byteCount;
+            UpdateLengthAfterWrite(_position);
+        }
 
         /// <summary>
         /// Writes a bit array as a byte-length-prefixed packed payload followed by its logical bit count.<br/>
@@ -3215,6 +3225,75 @@ namespace System.IO
             } while (value != 0);
 
             WriteBytes(encoded.Slice(0, count));
+        }
+
+        /// <summary>
+        /// Reads directly into caller-provided span storage without renting an adapter array.<br/>
+        /// The operation follows the ordinary <see cref="Stream.Read(Span{byte})"/> contract: it copies at most the remaining logical bytes, advances by the copied count, and returns zero at end of stream.<br/>
+        /// Segment-relative addressing, owner lifetime checks, and fixed-view boundaries are identical to the byte-array overload.<br/>
+        /// </summary>
+        /// <param name="destination">Writable destination that receives the available bytes.<br/></param>
+        /// <returns>The number of bytes copied into <paramref name="destination"/>.<br/></returns>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        public override int Read(Span<byte> destination)
+        {
+            EnsureNotDisposed();
+            int available = Math.Min(destination.Length, EffectiveLength - _position);
+            if (available <= 0) return 0;
+
+            GetReadOnlySpan(_position, available).CopyTo(destination);
+            _position += available;
+            return available;
+        }
+
+        /// <summary>
+        /// Writes caller-provided span data directly into this stream without allocating an adapter array.<br/>
+        /// Owned roots grow through the established pooled-capacity path; borrowed roots and fixed segments retain their existing bounds behavior.<br/>
+        /// The cursor and owning logical length advance only after the complete span copy succeeds.<br/>
+        /// </summary>
+        /// <param name="source">Read-only bytes to copy at the current cursor position.<br/></param>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        /// <exception cref="ArgumentOutOfRangeException">The write exceeds fixed-view bounds or available borrowed storage.<br/></exception>
+        public override void Write(ReadOnlySpan<byte> source)
+        {
+            EnsureCapacity(_position + source.Length);
+            source.CopyTo(GetWritableSpan(_position, source.Length));
+            _position += source.Length;
+            UpdateLengthAfterWrite(_position);
+        }
+
+        /// <summary>
+        /// Overwrites one existing byte at an unsigned managed-buffer offset without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// This compatibility boundary preserves callers whose serialized positions are represented as <see cref="uint"/> while retaining the established signed-index implementation.<br/>
+        /// Offsets above <see cref="int.MaxValue"/> are rejected before any destination validation or mutation because managed spans cannot address them.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based unsigned destination offset within existing written data.<br/></param>
+        /// <param name="value">The byte value to overwrite.<br/></param>
+        /// <exception cref="ArgumentOutOfRangeException"><paramref name="destinationOffset"/> exceeds the managed-buffer range or the byte does not fit entirely within written data.<br/></exception>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        public void WriteAtOffset(uint destinationOffset, byte value)
+        {
+            if (destinationOffset > int.MaxValue)
+                throw new ArgumentOutOfRangeException(nameof(destinationOffset), "The offset exceeds the managed-buffer range.");
+
+            WriteAtOffset((int)destinationOffset, value);
+        }
+
+        /// <summary>
+        /// Overwrites one existing 32-bit unsigned integer at an unsigned managed-buffer offset without changing <see cref="Position"/> or <see cref="Length"/>.<br/>
+        /// This compatibility boundary preserves callers whose serialized positions are represented as <see cref="uint"/> while retaining the established signed-index implementation.<br/>
+        /// Offsets above <see cref="int.MaxValue"/> are rejected before any destination validation or mutation because managed spans cannot address them.<br/>
+        /// </summary>
+        /// <param name="destinationOffset">The zero-based unsigned destination offset within existing written data.<br/></param>
+        /// <param name="value">The unsigned integer to overwrite.<br/></param>
+        /// <exception cref="ArgumentOutOfRangeException"><paramref name="destinationOffset"/> exceeds the managed-buffer range or the complete value does not fit entirely within written data.<br/></exception>
+        /// <exception cref="ObjectDisposedException">This stream or its root owner has been disposed.<br/></exception>
+        public void WriteAtOffset(uint destinationOffset, uint value)
+        {
+            if (destinationOffset > int.MaxValue)
+                throw new ArgumentOutOfRangeException(nameof(destinationOffset), "The offset exceeds the managed-buffer range.");
+
+            WriteAtOffset((int)destinationOffset, value);
         }
 
 

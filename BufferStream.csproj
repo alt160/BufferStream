@@ -6,11 +6,12 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <PackageId>BufferStream</PackageId>
+    <Title>BufferStream</Title>
     <PackageVersion>1.0.0</PackageVersion>
     <Authors>Eriq VanBibber</Authors>
     <Copyright>Copyright (c) 2026 Eriq VanBibber</Copyright>
-    <Description>A pooled, auto-resizing System.IO.Stream implementation with binary primitive helpers, borrowed-memory views, and pooled segments.</Description>
-    <PackageTags>stream buffer binary serialization pooling io memory</PackageTags>
+    <Description>A pooled, reusable System.IO.Stream for low-allocation in-memory binary work, with direct typed serialization, borrowed-memory views, shallow segments, explicit framing, and cursor-preserving positional writes.</Description>
+    <PackageTags>stream buffer binary serialization pooling arraypool low-allocation io memory</PackageTags>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageProjectUrl>https://github.com/alt160/BufferStream</PackageProjectUrl>
@@ -18,7 +19,7 @@
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>Initial public release.</PackageReleaseNotes>
+    <PackageReleaseNotes>Initial public release with pooled reusable storage, borrowed-memory roots, shallow cursor segments, typed binary readers and writers, explicit byte-length and count framing, public 7-bit integer codecs, and cursor-preserving positional writes.</PackageReleaseNotes>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IncludeSymbols>true</IncludeSymbols>

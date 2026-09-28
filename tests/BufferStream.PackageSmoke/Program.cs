@@ -269,6 +269,7 @@ internal static class ScalarWriteRoundTripSmoke
         AssertDirectByteWrites();
         AssertDisposedWritesRejected();
         AssertNullBitArrayRejected();
+        AssertAllocationSensitivePaths();
     }
 
     /// <summary>
@@ -400,6 +401,69 @@ internal static class ScalarWriteRoundTripSmoke
         {
         }
     }
+
+    /// <summary>
+    /// Verifies the allocation-sensitive decimal, memory-frame, and span-based Stream paths through the packaged public surface.<br/>
+    /// Warm scalar reads and framed-memory writes must allocate no managed bytes, while Stream-typed span calls must preserve exact bytes, cursor movement, end-of-stream behavior, and fixed-segment failure atomicity.<br/>
+    /// </summary>
+    private static void AssertAllocationSensitivePaths()
+    {
+        const decimal expectedDecimal = -123456789.0123456789m;
+        using var decimalStream = new BufferStream();
+        decimalStream.Write(expectedDecimal);
+        for (int i = 0; i < 20_000; i++)
+        {
+            decimalStream.Position = 0;
+            _ = decimalStream.ReadDecimal();
+        }
+
+        long decimalBefore = GC.GetAllocatedBytesForCurrentThread();
+        decimal checksum = 0;
+        for (int i = 0; i < 10_000; i++)
+        {
+            decimalStream.Position = 0;
+            checksum += decimalStream.ReadDecimal();
+        }
+        long decimalAllocated = GC.GetAllocatedBytesForCurrentThread() - decimalBefore;
+        if (decimalAllocated != 0 || checksum != expectedDecimal * 10_000)
+            throw new InvalidDataException($"ReadDecimal allocated {decimalAllocated} managed bytes or changed its value during the warmed loop.");
+
+        byte[] source = Enumerable.Range(0, 80).Select(static value => (byte)(value * 3)).ToArray();
+        using var memoryStream = new BufferStream(128);
+        for (int i = 0; i < 20_000; i++)
+        {
+            memoryStream.Reset();
+            memoryStream.Write(source.AsMemory());
+        }
+
+        long memoryBefore = GC.GetAllocatedBytesForCurrentThread();
+        long lengthChecksum = 0;
+        for (int i = 0; i < 10_000; i++)
+        {
+            memoryStream.Reset();
+            memoryStream.Write(source.AsMemory());
+            lengthChecksum += memoryStream.Length;
+        }
+        long memoryAllocated = GC.GetAllocatedBytesForCurrentThread() - memoryBefore;
+        if (memoryAllocated != 0 || lengthChecksum != 820_000)
+            throw new InvalidDataException($"Write(Memory<byte>) allocated {memoryAllocated} managed bytes or changed its framed length during the warmed loop.");
+
+        using var spanStream = new BufferStream();
+        Stream standard = spanStream;
+        standard.Write(source.AsSpan(5, 7));
+        standard.Position = 0;
+        Span<byte> destination = stackalloc byte[9];
+        int copied = standard.Read(destination);
+        if (copied != 7 || !destination[..copied].SequenceEqual(source.AsSpan(5, 7)) || standard.Read(destination) != 0)
+            throw new InvalidDataException("Stream-typed span overrides changed bytes, cursor movement, or end-of-stream behavior.");
+
+        using var owner = new BufferStream();
+        owner.Write((byte)0xCC);
+        using BufferStream fixedSegment = owner.Segment(0, 1);
+        ExpectException<ArgumentOutOfRangeException>(static stream => stream.Write(new byte[] { 1, 2 }.AsMemory()), fixedSegment, "oversized fixed-segment memory write");
+        if (fixedSegment.Position != 0 || owner.PeekByte(0) != 0xCC)
+            throw new InvalidDataException("The rejected fixed-segment memory write partially changed the destination.");
+    }
 }
 
 internal static class PositionalWriteSmoke
@@ -433,6 +497,7 @@ internal static class PositionalWriteSmoke
         AssertStringRoundTrips();
         AssertBoundaries();
         AssertDisposedWritesRejected();
+        AssertUnsignedOffsetCompatibility();
     }
 
     /// <summary>
@@ -614,6 +679,36 @@ internal static class PositionalWriteSmoke
         catch (TException)
         {
         }
+    }
+
+    /// <summary>
+    /// Verifies the unsigned-offset compatibility boundaries used by serializers that store wire positions as <see cref="uint"/>.<br/>
+    /// Both supported value widths must preserve stream state, and an offset above the managed-buffer range must fail before changing existing bytes.<br/>
+    /// </summary>
+    private static void AssertUnsignedOffsetCompatibility()
+    {
+        using var stream = new BufferStream();
+        stream.SetLength(8);
+        stream.Position = 1;
+        long originalPosition = stream.Position;
+        long originalLength = stream.Length;
+
+        stream.WriteAtOffset(2u, (byte)0xA5);
+        stream.WriteAtOffset(4u, 3_456_789_012u);
+        if (stream.Position != originalPosition || stream.Length != originalLength)
+            throw new InvalidDataException("Unsigned-offset positional writes changed position or length.");
+
+        stream.Position = 2;
+        if (stream.ReadByte() != 0xA5)
+            throw new InvalidDataException("WriteAtOffset(uint, byte) changed the scalar representation.");
+        stream.Position = 4;
+        if (stream.ReadUInt32() != 3_456_789_012u)
+            throw new InvalidDataException("WriteAtOffset(uint, uint) changed the scalar representation.");
+
+        byte[] beforeFailure = stream.ToArray();
+        ExpectException<ArgumentOutOfRangeException>(static candidate => candidate.WriteAtOffset(uint.MaxValue, (byte)1), stream, "out-of-range unsigned positional offset");
+        if (!stream.AsReadOnlySpan.SequenceEqual(beforeFailure))
+            throw new InvalidDataException("A rejected unsigned-offset positional write changed existing bytes.");
     }
 }
 
