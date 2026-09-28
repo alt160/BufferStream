@@ -19,7 +19,7 @@
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>Initial public release with pooled reusable storage, borrowed-memory roots, shallow cursor segments, typed binary readers and writers, explicit byte-length and count framing, public 7-bit integer codecs, and cursor-preserving positional writes.</PackageReleaseNotes>
+    <PackageReleaseNotes>Clarified performance guidance for repeated independent-object serialization, pooled root-buffer reuse, and MemoryStream lifecycle tradeoffs.</PackageReleaseNotes>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IncludeSymbols>true</IncludeSymbols>

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## 1.0.2 - 2026-09-28
+
+- Clarified the allocation and performance tradeoffs of repeated independent-object serialization.
+- Documented the difference between per-item disposed buffers and one owned buffer reused with `Reset()`.
+- Added guidance on unavoidable independent output arrays and on avoiding them when a synchronous consumer can use a borrowed written view.
+
 ## 1.0.0 - 2026-09-27
 
 - Initial public release.

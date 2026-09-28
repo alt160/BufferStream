@@ -4,7 +4,11 @@
 [![NuGet](https://img.shields.io/nuget/v/BufferStream.svg)](https://www.nuget.org/packages/BufferStream)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/alt160/BufferStream/blob/main/LICENSE)
 
-`BufferStream` is a pooled, reusable `System.IO.Stream` for in-memory binary work. It combines ordinary stream behavior with direct primitive encoding, explicit collection framing, borrowed-memory inputs, shallow cursor segments, and cursor-preserving backpatching.
+`BufferStream` is a pooled, reusable `System.IO.Stream` for allocation-sensitive, high-throughput in-memory binary work. Its owned storage comes from `ArrayPool<byte>.Shared`, it retains that capacity for reuse, and its borrowed-memory and shallow-view paths can avoid avoidable copies.
+
+It is especially useful when code serializes many independent objects. A conventional create-grow-discard `MemoryStream` loop creates a stream object and, as data is written, backing arrays for each blob; growth can replace and copy those arrays. BufferStream is designed for that lifecycle: serializers, storage engines, data pipelines, and protocol handlers that need direct binary-I/O ergonomics without avoidable buffer, wrapper, and cursor-management overhead.
+
+It also combines ordinary stream behavior with direct primitive encoding, explicit collection framing, borrowed-memory inputs, shallow cursor segments, and cursor-preserving backpatching.
 
 It is designed for code that repeatedly asks questions such as:
 
@@ -49,9 +53,11 @@ string? text = buffer.ReadString();
 
 ## When BufferStream is a better fit
 
-### 1. Reusing one serialization buffer
+### 1. Reusing one serialization buffer in a hot loop
 
-A server, serializer, or storage engine may encode thousands or millions of independent values. Creating a new stream and backing array for every value adds avoidable allocation and garbage-collection pressure.
+A server, serializer, or storage engine may encode thousands or millions of independent values. A common implementation creates a `MemoryStream` and often a `BinaryWriter` for every record, then discards both. That creates per-record wrapper objects and transient buffer storage; a growing `MemoryStream` can also replace and copy its backing array.
+
+If each encoded value must escape as an independent `byte[]`, that final result allocation is necessary. BufferStream does not claim to remove it. Its purpose is to remove the intermediate stream and buffer lifecycle costs when a consumer can use the written view before the next record begins.
 
 An owned BufferStream rents its storage from `ArrayPool<byte>.Shared`. `Reset()` returns the same instance to an empty logical state while retaining its current capacity.
 
@@ -67,7 +73,21 @@ foreach (Message message in messages)
 }
 ```
 
-As long as the retained capacity is sufficient, this avoids allocating a new stream and backing array for each iteration. Allocations performed by `WriteMessage` or `Send` remain their own responsibility.
+Once its retained capacity is sufficient, this path does not create a new `BufferStream`, rent and return a new root buffer, or clear that root buffer for each iteration. `Send` must finish using the view before the next `Reset()`. Allocations performed by `WriteMessage` or `Send` remain their own responsibility.
+
+The simplest per-item form still benefits from pooled backing storage:
+
+```csharp
+foreach (Message message in messages)
+{
+    using var buffer = new BufferStream(initialCapacity: 4096);
+    WriteMessage(buffer, message);
+
+    Send(buffer.AsReadOnlySpan);
+}
+```
+
+Disposing that buffer returns its owned array to the pool, so it avoids repeatedly abandoning arrays to garbage collection after the pool is warm. It still constructs one `BufferStream` object per item and rents, clears, and returns its root storage per item. Reusing one owned instance with `Reset()` is the lower-overhead steady-state option.
 
 This is the workload that originally motivated BufferStream and the role it serves beneath the Inheto serializer.
 
@@ -266,6 +286,20 @@ The table describes available operations, not a universal serialization standard
 | Direct logical-content memory/span views | Possible through buffer APIs and careful length tracking | `AsReadOnlyMemory`, `AsReadOnlySpan`, and `AsWritableSpan` |
 
 BufferStream is therefore not a claim that `MemoryStream` is poorly designed. It is a different ownership and binary-I/O policy packaged as one stream type.
+
+### Performance in repeated-blob workloads
+
+The most visible difference is usually the lifecycle for many separate payloads, not a single isolated write:
+
+| Pattern | Stream and wrapper lifecycle | Backing-storage lifecycle | Likely allocation pressure after warm-up |
+|---|---|---|---|
+| `new MemoryStream()` for each payload | New stream object for every payload; often paired with new `BinaryReader` or `BinaryWriter` | New managed arrays as data is written; growth can allocate and copy replacements | Per-payload wrapper and buffer churn |
+| `new BufferStream()` and `Dispose()` for each payload | New `BufferStream` object for every payload | Rented array is cleared and returned on disposal | Root wrapper churn remains; retained arrays can be reused by the pool |
+| One owned `BufferStream` plus `Reset()` | One root stream reused | Retains sufficient rented capacity across payloads | Avoids the root-stream and root-buffer lifecycle on each iteration |
+
+For synchronous consumers such as a socket writer, storage engine, or hashing operation, passing `AsReadOnlySpan` or `AsReadOnlyMemory` can also avoid materializing a separate final array. Use `ToArray()` only when a caller genuinely needs an independent, long-lived snapshot.
+
+These are lifecycle advantages, not a promise that every individual operation is faster. A deliberately reused, pre-sized `MemoryStream` can also reduce allocation pressure, and string encoding, application objects, or required output copies can dominate a complete workload. Measure the workload that matters to your application.
 
 ## Framed and unframed bytes
 
